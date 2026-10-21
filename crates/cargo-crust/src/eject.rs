@@ -31,16 +31,25 @@ fn decls(p: &Project, rel: &Path, decl_file: &Path) -> String {
     for &i in &d.rsc {
         let r = &p.rsc[i];
         if !r.module.is_empty() {
+            // Mêmes attributs et visibilité que les déclarations générées par crust-build.
+            let a = crust_build::mod_attrs(r);
+            let cfgs = a.replace("#[allow(clippy::module_inception)] ", "");
+            let vis = p.module_vis(&r.rel.with_extension(""));
             let _ = writeln!(
                 code,
-                "pub mod {};\n#[allow(unused_imports)]\npub use self::{}::*;",
+                "{a}{vis} mod {};\n{cfgs}#[allow(unused_imports)]\n{vis} use self::{}::*;",
                 r.name, r.name
             );
         }
     }
     for s in &d.subdirs {
         if p.dirs[s].kind == DirKind::Generated {
-            let _ = writeln!(code, "pub mod {};", s.file_name().unwrap_or_default().to_string_lossy());
+            let vis = p.module_vis(s);
+            let _ = writeln!(
+                code,
+                "{vis} mod {};",
+                s.file_name().unwrap_or_default().to_string_lossy()
+            );
         }
     }
     for &i in &d.auto_rs {
@@ -213,6 +222,19 @@ fn plan(dir: &Path) -> Result<Vec<Action>, String> {
         if empty {
             lines.remove(i);
         }
+    }
+    // Réglages Crust (`[package.metadata.crust]`, profils de crust-syntax / crust-build).
+    let crust_sections = [
+        "[package.metadata.crust]",
+        "[profile.dev.package.crust-syntax]",
+        "[profile.dev.package.crust-build]",
+    ];
+    while let Some(i) = lines.iter().position(|l| crust_sections.contains(&l.trim())) {
+        let len = 1 + lines[i + 1..]
+            .iter()
+            .take_while(|l| !l.trim_start().starts_with('['))
+            .count();
+        lines.drain(i..i + len);
     }
     let mut toml = lines.join("\n");
     while toml.contains("\n\n\n") {

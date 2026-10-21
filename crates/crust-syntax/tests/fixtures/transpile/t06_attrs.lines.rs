@@ -1,10 +1,10 @@
-                        
-   
-                         
-                           
-                               
-                   
-#[cfg(not(feature = "jamais"))] #[allow(dead_code)] impl Moteur {
+/// Un moteur documenté.
+///
+/// Sur plusieurs lignes.
+#[derive(Debug, PartialEq)]
+#[cfg(not(feature = "jamais"))]
+#[allow(dead_code)]
+pub struct Moteur { #[doc = " Vitesse en tr/min."] #[allow(unused)] pub vitesse: u32, #[doc = " Bloc de doc. "] pub couple: f32, } #[cfg(not(feature = "jamais"))] #[allow(dead_code)] impl Moteur {
                           
                     
                      
@@ -21,4 +21,4 @@
     impl Default for Moteur {
         fn default() -> Self { Self { vitesse: 0, couple: 0.0 } }
     } #[cfg(not(feature = "jamais"))] #[allow(dead_code)] impl Moteur {
-} #[doc = " Un moteur documenté."] #[doc = ""] #[doc = " Sur plusieurs lignes."] #[derive(Debug, PartialEq)] #[cfg(not(feature = "jamais"))] #[allow(dead_code)] pub struct Moteur { #[doc = " Vitesse en tr/min."] #[allow(unused)] pub vitesse: u32, #[doc = " Bloc de doc. "] pub couple: f32, }
+}

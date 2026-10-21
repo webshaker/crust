@@ -1,4 +1,4 @@
-impl Crlf {     
+pub struct Crlf { pub x: u8, } impl Crlf {
               
 
   } impl Clone for Crlf {
@@ -6,4 +6,4 @@ impl Crlf {
     } impl Crlf {
 
     pub fn get(&self) -> u8 { self.x }
-} pub struct Crlf { pub x: u8, }
+}

@@ -106,6 +106,9 @@ pub struct Project {
     pub dirs: BTreeMap<PathBuf, Dir>,
     /// Erreurs sans fichier `.rsc` à désigner : injectées dans le fichier racine.
     pub root_errors: Vec<String>,
+    /// Dossiers et fichiers (relatifs à `src/`, sans extension) déclarés privés
+    /// dans `[package.metadata.crust] private = [...]` : modules `pub(crate)`.
+    pub private: BTreeSet<PathBuf>,
     pub warnings: Vec<String>,
 }
 
@@ -141,6 +144,34 @@ fn dir_module(rel_dir: &Path) -> Result<String, String> {
         path = module_join(&path, &seg);
     }
     Ok(path)
+}
+
+/// `[package.metadata.crust] private = ["robot/interne", "outils/Pince"]`.
+fn read_private(src: &Path) -> BTreeSet<PathBuf> {
+    let Some(toml) = src
+        .parent()
+        .and_then(|d| std::fs::read_to_string(d.join("Cargo.toml")).ok())
+    else {
+        return BTreeSet::new();
+    };
+    let Some(section) = toml.split("[package.metadata.crust]").nth(1) else {
+        return BTreeSet::new();
+    };
+    let section = section.split("\n[").next().unwrap_or("");
+    let Some(at) = section.find("private") else {
+        return BTreeSet::new();
+    };
+    let rest = &section[at..];
+    let (Some(open), Some(close)) = (rest.find('['), rest.find(']')) else {
+        return BTreeSet::new();
+    };
+    rest[open + 1..close]
+        .split(',')
+        .filter_map(|e| {
+            let e = e.trim().trim_matches('"').trim().trim_end_matches('/');
+            (!e.is_empty()).then(|| PathBuf::from(e.strip_suffix(".rsc").unwrap_or(e)))
+        })
+        .collect()
 }
 
 /// Répertoires `R` dont le contenu est inclus par ce fichier : `"/crust/dir/<R>.rs"`.
@@ -212,7 +243,9 @@ impl Project {
             dirs: BTreeMap::new(),
             root_errors: Vec::new(),
             warnings: Vec::new(),
+            private: BTreeSet::new(),
         };
+        p.private = read_private(&src);
 
         // 1. Fichiers .rsc et leurs chemins de module.
         let mut rels = Vec::new();
@@ -663,6 +696,52 @@ impl Project {
         }
     }
 
+    /// Visibilité de la déclaration du module d'un dossier ou d'un fichier.
+    pub fn module_vis(&self, rel_without_ext: &Path) -> &'static str {
+        if self.private.contains(rel_without_ext) {
+            "pub(crate)"
+        } else {
+            "pub"
+        }
+    }
+
+    /// Chemin de module d'un dossier vu depuis la cible `from`, et ses noms connus.
+    pub fn module_of_dir(&self, rel: &Path, from: Target) -> Result<Resolved, ResolveError> {
+        let module = match self.dirs.get(rel) {
+            Some(d) if !d.module.is_empty() => d.module.clone(),
+            Some(_) => {
+                return Err(ResolveError::InvalidName {
+                    component: rel.display().to_string(),
+                });
+            }
+            None => {
+                // Dossier sans .rsc : peut-être un module .rs ordinaire.
+                let path = crust_syntax::resolve::dir_module_path(rel)?;
+                if !self.rs_modules.iter().any(|m| m.path == path) {
+                    return Err(ResolveError::NotFound {
+                        tried: vec![self.src.join(rel).display().to_string()],
+                    });
+                }
+                path
+            }
+        };
+        let hosted = self
+            .dirs
+            .get(rel)
+            .is_some_and(|d| d.kind != DirKind::Generated && d.kind != DirKind::Root);
+        let module_path = match (self.owner, from) {
+            (a, b) if a == b => module,
+            (Target::Lib, _) => module.replacen("crate", &self.lib_name, 1),
+            _ => return Err(ResolveError::Unsupported),
+        };
+        let exports = if hosted {
+            None
+        } else {
+            crust_syntax::resolve::dir_exports(&self.src.join(rel))
+        };
+        Ok(Resolved { module_path, exports })
+    }
+
     /// Chemin de module d'un fichier vu depuis la cible `from`.
     pub fn module_of(&self, file: &Path, from: Target) -> Result<String, ResolveError> {
         let fix = |module: &str, target: Target| -> Result<String, ResolveError> {
@@ -720,10 +799,12 @@ pub struct BuildResolver<'p> {
 
 impl Resolver for BuildResolver<'_> {
     fn resolve(&self, path: &str) -> Result<Resolved, ResolveError> {
-        let (file, _) = resolve_file(&self.project.src, &self.current, path)?;
-        Ok(Resolved {
-            module_path: self.project.module_of(&file, self.target)?,
-            exports: exports_of(&file),
-        })
+        match crust_syntax::resolve::resolve_target(&self.project.src, &self.current, path)? {
+            crust_syntax::resolve::ImportTarget::File { canonical, .. } => Ok(Resolved {
+                module_path: self.project.module_of(&canonical, self.target)?,
+                exports: exports_of(&canonical),
+            }),
+            crust_syntax::resolve::ImportTarget::Dir { rel } => self.project.module_of_dir(&rel, self.target),
+        }
     }
 }

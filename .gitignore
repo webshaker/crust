@@ -2,3 +2,6 @@ target/
 spikes/**/target/
 spikes/**/.crust/
 spikes/s6/src/m*/
+
+# Notes entre agents (non versionnées)
+RETOURS_*.md

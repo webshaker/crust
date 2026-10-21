@@ -78,13 +78,23 @@ function crustSourceMap() {
           const crust = path.join(build, pkg, 'out', 'crust');
           try {
             const src = fs.readFileSync(path.join(crust, 'source_dir'), 'utf8').trim();
-            map[path.join(crust, 'src')] = src;
+            for (const [from, to] of driveVariants(path.join(crust, 'src'), src)) map[from] = to;
           } catch { /* pas un paquet Crust */ }
         }
       }
     }
   }
   return map;
+}
+
+/** Windows : `source_dir` contient `C:\…`, le débogueur et VS Code `c:\…` ; on mappe les deux. */
+function driveVariants(from, to) {
+  const lower = p => p.replace(/^([A-Z]):/, (_, d) => `${d.toLowerCase()}:`);
+  const upper = p => p.replace(/^([a-z]):/, (_, d) => `${d.toUpperCase()}:`);
+  const pairs = [[from, lower(to)]];
+  if (lower(from) !== from) pairs.push([lower(from), lower(to)]);
+  if (upper(from) !== from) pairs.push([upper(from), lower(to)]);
+  return pairs;
 }
 
 function safeList(dir) {
@@ -113,7 +123,13 @@ function activate(context) {
     vscode.commands.registerCommand('crust.setup', () => setup(context, false)),
     vscode.debug.registerDebugConfigurationProvider('lldb', {
       resolveDebugConfiguration(_folder, config) {
-        config.sourceMap = { ...crustSourceMap(), ...(config.sourceMap || {}) };
+        const map = crustSourceMap();
+        if (Object.keys(map).length === 0) return config;
+        config.sourceMap = { ...map, ...(config.sourceMap || {}) };
+        // Le même paquet est compilé plusieurs fois (binaire, tests) : plusieurs
+        // copies générées mènent au même .rsc, et la correspondance inverse est
+        // ambiguë. Les points d'arrêt par nom de fichier marchent dans tous les cas.
+        if (config.breakpointMode === undefined) config.breakpointMode = 'file';
         return config;
       },
     }),

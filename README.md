@@ -24,7 +24,7 @@ pub class Servomoteur over Moteur(parent) {   // champ `pub parent: Moteur`
 ```sh
 cargo install --path crates/cargo-crust   # cargo crust …
 cargo install --path crates/crust-lsp     # rust-analyzer pour les .rsc
-code --install-extension editors/vscode/crust-0.1.0.vsix
+code --install-extension editors/vscode/crust-0.1.1.vsix
 
 cargo crust new mon_projet                # ou `cargo crust init` dans un projet existant
 cd mon_projet && cargo crust run
@@ -44,6 +44,14 @@ Exemple complet : `exemples/robot/` (l'ouvrir dans sa propre fenêtre VS Code).
 | `cargo crust eject` | revenir à du Rust standard (retire Crust du paquet) |
 
 `cargo build` seul fonctionne aussi : il suffit de `crust-build` en dépendance de build.
+
+## Projets qui utilisent Crust
+
+- [RustUI](https://github.com/webshaker/RustUI) : widgets iced partagés, sources en `.rsc`.
+  Pour s'en servir, rien à installer : cargo récupère `crust-build` depuis ce dépôt.
+- Simulateur électronique.
+
+Ces projets dépendent de `crates/crust-build` par `git` : ne pas déplacer ce crate.
 
 ## Dépôt
 

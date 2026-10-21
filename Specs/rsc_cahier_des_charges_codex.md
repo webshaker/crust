@@ -1419,7 +1419,7 @@ Ne pas considérer une phase comme réussie si les erreurs pointent vers du Rust
     - diagnostic natif à la bonne position;
     - renommage d'un champ (3 + 2 modifications, sans doublon);
     - coloration de `class`.
-- **P5 : terminé** (2026-10-21). Extension `editors/vscode` (JavaScript sans compilation, `crust-0.1.0.vsix`, installée sur cette machine). Elle fournit :
+- **P5 : terminé** (2026-10-21). Extension `editors/vscode` (JavaScript sans compilation, `crust-0.1.1.vsix`, installée sur cette machine). Elle fournit :
   - l'association `.rsc` → langage `rust` (pas de `files.associations` global);
   - une grammaire d'injection pour `class`, `over`, `import` et `from`, vérifiée avec vscode-textmate et la grammaire Rust de VS Code : rien n'est coloré à tort dans les chaînes, les commentaires ou les identifiants;
   - dans un projet Crust (`crust-build` en dépendance de build), la proposition, avec l'accord de l'utilisateur, de régler `rust-analyzer.server.path` sur `crust-lsp` au niveau du workspace;

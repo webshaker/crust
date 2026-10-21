@@ -1,4 +1,4 @@
-impl<'a, T: Clone, const N: usize> Pile<'a, T, N> where T: Default {
+pub struct Pile<'a, T: Clone, const N: usize = 16> where T: Default { items: [T; N], nom: &'a str, } impl<'a, T: Clone, const N: usize> Pile<'a, T, N> where T: Default {
 
 
  
@@ -23,10 +23,10 @@ impl<'a, T: Clone, const N: usize> Pile<'a, T, N> where T: Default {
             self.items == other.items
         }
     } impl<'a, T: Clone, const N: usize> Pile<'a, T, N> where T: Default {
-} pub struct Pile<'a, T: Clone, const N: usize = 16> where T: Default { items: [T; N], nom: &'a str, }
+}
 
-impl<F: Fn(u32) -> u32> Fonction<F> {  
+pub struct Fonction<F: Fn(u32) -> u32> { f: F, } impl<F: Fn(u32) -> u32> Fonction<F> {
          
 
     pub fn appeler(&self, x: u32) -> u32 { (self.f)(x) }
-} pub struct Fonction<F: Fn(u32) -> u32> { f: F, }
+}

@@ -41,7 +41,10 @@ Dans chaque paquet qui contiendra des `.rsc` :
 
 ```toml
 [build-dependencies]
-crust-build = { path = "/home/rtx/crust/crates/crust-build" }
+# Depuis le dépôt public (fonctionne partout, Windows compris) ; épingler une révision :
+crust-build = { git = "https://github.com/webshaker/crust", rev = "<commit>" }
+# ou, sur la machine de développement de Crust :
+# crust-build = { path = "/home/rtx/crust/crates/crust-build" }
 ```
 
 L'édition doit être 2018 ou plus (2021 ou 2024 recommandées).
@@ -93,7 +96,7 @@ cargo crust eject [--dry-run]                    # convertit tout le paquet en R
 
 ### 2.5. VS Code
 
-1. L'extension « Crust » doit être installée (`code --install-extension /home/rtx/crust/editors/vscode/crust-0.1.0.vsix`), ainsi que `crust-lsp` (`cargo install --path /home/rtx/crust/crates/crust-lsp`).
+1. L'extension « Crust » doit être installée (`code --install-extension /home/rtx/crust/editors/vscode/crust-0.1.1.vsix`), ainsi que `crust-lsp` (`cargo install --path /home/rtx/crust/crates/crust-lsp`).
 2. À l'ouverture d'un projet Crust, l'extension propose de faire passer rust-analyzer par `crust-lsp` : répondre « Activer ». Sinon, utiliser la commande « Crust : utiliser crust-lsp dans ce workspace ». Elle écrit `"rust-analyzer.server.path": "…/crust-lsp"` dans `.vscode/settings.json` du workspace.
 3. Bouton « afficher le Rust généré » dans la barre d'un `.rsc`.
 
@@ -198,6 +201,14 @@ pub class Axe over Moteur(motorisation) { }   // nom explicite
   ```
   Sinon : erreur CR0010, qui donne la ligne exacte. Pour un sous-répertoire : `/crust/dir/a/b.rs`.
 - **Supprimer un `mod.rs`** devenu inutile, c'est-à-dire qui ne faisait que déclarer des sous-modules désormais en `.rsc`, et retirer les `mod x;` correspondants.
+- **Dossier ou fichier privé** : par défaut, les modules générés sont `pub`. Pour qu'un dossier (ou un fichier) reste interne à la crate, comme un ancien `mod fibres;` sans `pub`, le lister dans `Cargo.toml` :
+  ```toml
+  [package.metadata.crust]
+  private = ["fibres", "services/esp_idf", "robot/Interne"]   # dossiers, ou fichiers sans .rsc
+  ```
+  Ces modules deviennent `pub(crate)`. Dans une lib, c'est aussi ce qui évite que clippy les traite comme API publique (par exemple `not_unsafe_ptr_arg_deref`, refusé par défaut).
+- **Fichier conditionnel** : un `#![cfg(feature = "x")]` en tête d'un `.rsc` désactive tout le module ; Crust reporte ce `cfg` sur ses déclarations générées.
+- **`banc/Banc.rsc`** (un dossier par concept, un fichier par classe) : `crust-build` ajoute lui-même `#[allow(clippy::module_inception)]`, il n'y a rien à faire.
 - **Modules `.rs` existants** : leurs `mod x;` continuent de fonctionner. Un `mod x;` écrit dans un `.rsc` est aussi pris en charge, avec la même sémantique qu'en Rust.
 
 ### 3.5. `import`
@@ -217,13 +228,20 @@ import { lire } from "./capteur.rs";                // fonctionne aussi vers un 
 - **Ne pas mélanger** les deux mécanismes : déclarer un `.rs` par `mod` **et** l'importer est valide, mais le déclarer par **deux** `mod` puis l'importer donne l'erreur CR0011.
 - Dans `main.rsc` d'une crate lib + bin, `import` vers un module de la lib produit `use nom_de_la_lib::…` automatiquement.
 - Les fichiers `.rs` ne peuvent pas utiliser `import` : ils gardent `use crate::robot::Moteur;`.
+- **Import depuis un dossier** : `import { Banc, Mesure } from "./banc/";` (ou `"@/banc"`) devient `use crate::banc::{Banc, Mesure};` grâce aux chemins courts. Les noms sont vérifiés contre les items des `.rsc` du dossier et ses sous-modules. Si un fichier `banc.rsc` existe aussi, il a la priorité : terminer par `/` pour viser le dossier.
 
-### 3.6. Racine `main.rsc` / `lib.rsc`
+### 3.6. Chemins relatifs dans les macros
+
+`include_str!("../data/x.txt")`, `include_bytes!` et `include!` avec un chemin relatif fonctionnent comme dans un `.rs`, relatifs au `.rsc`. Crust réécrit ces chemins, parce que le fichier compilé vit dans `OUT_DIR`.
+
+Ce n'est pas le cas des autres macros qui lisent des fichiers (`sqlx::query_file!`, etc.) : y utiliser `concat!(env!("CARGO_MANIFEST_DIR"), "/…")`.
+
+### 3.7. Racine `main.rsc` / `lib.rsc`
 
 - Interdit : `#![...]` de premier niveau (erreur CR0015). Les mettre dans `src/main.rs` / `src/lib.rs`, au-dessus de la ligne `include!`.
 - La doc de crate `//!` y est ignorée. Pour une lib documentée, la garder dans `src/lib.rs`.
 
-### 3.7. Mots réservés
+### 3.8. Mots réservés
 
 `class`, `over`, `import` et `from` ne sont **pas** réservés : `let from = …;`, `T::from(x)` et `fn class()` restent valides.
 

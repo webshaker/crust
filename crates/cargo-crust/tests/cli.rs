@@ -285,6 +285,16 @@ fn eject_produit_du_rust_standard() {
     let run = cargo_plain(&ws, &["run", "-q", "-p", "robot-lib", "--bin", "outil"]);
     assert_eq!(text(&run.stdout), "outil : moteur 7\n", "{}", text(&run.stderr));
 
+    // p5 : dossier privé, `#![cfg]` de tête, include_str relatif, import de dossier.
+    let dir = fixture("p5_retours", "eject_p5");
+    let out = crust(&dir, &["eject"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_no_crust(&dir);
+    let run = cargo_plain(&dir, &["run", "-q", "--features", "capture"]);
+    assert_eq!(text(&run.stdout), "bonjour 4 7\ncapture\n", "{}", text(&run.stderr));
+    let clippy = cargo_plain(&dir, &["clippy", "-q", "--all-targets", "--", "-D", "warnings"]);
+    assert!(clippy.status.success(), "{}", text(&clippy.stderr));
+
     // p3 : projet Rust existant, répertoire mixte (include dans outils.rs).
     let dir = fixture("p3_mixed", "eject_p3");
     let out = crust(&dir, &["eject"]);

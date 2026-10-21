@@ -1,0 +1,16 @@
+[package]
+name = "p5_retours"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+capture = []
+
+[build-dependencies]
+crust-build = { path = "{{CRUST_BUILD}}" }
+
+[package.metadata.crust]
+# Dossier privé : module pub(crate) au lieu de pub.
+private = ["interne"]
+
+[workspace]

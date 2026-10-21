@@ -1,4 +1,4 @@
-impl Moteur {     
+pub struct Moteur { pub vitesse: u32, } impl Moteur {
                      
 
     pub fn new() -> Self {
@@ -8,4 +8,4 @@ impl Moteur {
     pub fn accelerer(&mut self, delta: u32) {
         self.vitesse += delta;
     }
-} pub struct Moteur { pub vitesse: u32, }
+}

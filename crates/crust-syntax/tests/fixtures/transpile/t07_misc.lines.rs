@@ -2,12 +2,12 @@
 #![allow(dead_code)]
 
 // Commentaire avant la classe.
-impl Vide {     
-} pub struct Vide { }
+pub struct Vide { } impl Vide {
+}
 
-impl UneLigne {             fn f(&self) -> u8 { self.x } } pub struct UneLigne { x: u8, }
+pub struct UneLigne { x: u8, } impl UneLigne {        fn f(&self) -> u8 { self.x } }
 
-impl Divers {     
+pub struct Divers { a: u8, b: u16, r#type: u8, } impl Divers {
     #![allow(unused)]
     // commentaire entre les membres
            /* bloc */        
@@ -25,7 +25,7 @@ impl Divers {
 
     macro_genere!();
   } impl Clone for Divers { fn clone(&self) -> Self { Self { a: self.a, b: self.b, r#type: self.r#type } } } impl Divers {
-} pub struct Divers { a: u8, b: u16, r#type: u8, }
+}
 
 macro_rules! macro_genere {
     () => {
@@ -35,11 +35,11 @@ macro_rules! macro_genere {
 use macro_genere;
 
 mod interne {
-    impl Imbriquee {     
+    pub struct Imbriquee { pub v: Vec<Vec<u8>>, } impl Imbriquee {
                             
 
         pub fn taille(&self) -> usize { self.v.len() }
-    } pub struct Imbriquee { pub v: Vec<Vec<u8>>, }
+    }
 }
 
 fn utilise(c: &Divers) -> u8 {

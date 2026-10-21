@@ -156,3 +156,19 @@ pub fn top_level_names(src: &str) -> Option<Vec<String>> {
 pub fn mod_decls(src: &str) -> Vec<ModDecl> {
     parser::mod_decls(&toks::Toks::new(src))
 }
+
+/// `#![cfg(...)]` en tête d'un fichier, convertis en attributs externes
+/// (`#[cfg(...)]`) à reporter sur sa déclaration `mod` et ses réexports.
+pub fn leading_cfgs(src: &str) -> Vec<String> {
+    let t = toks::Toks::new(src);
+    let mut out = Vec::new();
+    let mut p = 0;
+    while let Some(next) = t.inner_attr_end(p, t.len()) {
+        if t.is_punct(p, '#') && matches!(t.text(p + 3), "cfg" | "cfg_attr") {
+            let text = emit::oneline_text(&t, toks::TokRange::new(p, next));
+            out.push(text.replacen("#!", "#", 1).replacen("# !", "#", 1));
+        }
+        p = next;
+    }
+    out
+}

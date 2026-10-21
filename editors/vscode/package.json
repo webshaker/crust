@@ -2,7 +2,7 @@
   "name": "crust",
   "displayName": "Crust",
   "description": "Fichiers .rsc (Rust avec classes) : rust-analyzer via crust-lsp, coloration, Rust généré.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "crust-local",
   "license": "MIT",
   "repository": { "type": "git", "url": "file:///home/rtx/crust" },

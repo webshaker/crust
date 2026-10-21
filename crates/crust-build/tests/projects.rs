@@ -141,3 +141,18 @@ fn p4_erreurs_de_modules() {
         "{stderr}"
     );
 }
+
+/// Retours d'usage : dossier privé, `#![cfg]` de tête, module_inception,
+/// `include_str!` relatif, import de dossier.
+#[test]
+fn p5_retours_d_usage() {
+    let dir = project("p5_retours");
+    assert_eq!(stdout_ok(&dir, &["run", "-q"]), expected(&dir));
+    assert_eq!(
+        stdout_ok(&dir, &["run", "-q", "--features", "capture"]),
+        "bonjour 4 7\ncapture\n"
+    );
+    // Ni not_unsafe_ptr_arg_deref (dossier privé) ni module_inception (banc/Banc.rsc).
+    let out = cargo(&dir, &["clippy", "-q", "--all-targets", "--", "-D", "warnings"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}

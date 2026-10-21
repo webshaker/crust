@@ -1,7 +1,7 @@
 use std::fmt;
 
-                       
-impl Moteur {     
+#[derive(Debug, Clone)]
+pub struct Moteur { pub vitesse: u32, } impl Moteur {
                      
 
     pub fn new() -> Self { Self { vitesse: 0 } }
@@ -21,4 +21,4 @@ impl Moteur {
             write!(f, "{} tr/min", self.vitesse)
         }
     } impl Moteur {
-} #[derive(Debug, Clone)] pub struct Moteur { pub vitesse: u32, }
+}

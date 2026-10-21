@@ -259,6 +259,28 @@ pub fn decl_files(p: &Project, gen_dir: &Path) -> Vec<(PathBuf, String)> {
     files
 }
 
+/// Attributs à poser sur la déclaration `mod` d'un `.rsc` : ses `#![cfg]` de
+/// tête (sans quoi le `pub use` généré échoue quand le module est désactivé), et
+/// `allow(clippy::module_inception)` quand le fichier porte le nom de son dossier
+/// (`banc/Banc.rsc` → `banc::banc`, convention « un fichier par classe »).
+pub fn mod_attrs(r: &RscFile) -> String {
+    let mut a = String::new();
+    if let Ok(text) = std::fs::read_to_string(&r.abs) {
+        for cfg in crust_syntax::leading_cfgs(&text) {
+            a.push_str(&cfg);
+            a.push(' ');
+        }
+    }
+    if r.rel
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|d| d.to_string_lossy() == r.name)
+    {
+        a.push_str("#[allow(clippy::module_inception)] ");
+    }
+    a
+}
+
 /// Fichier de déclarations d'un répertoire : `<gen>/dir/<rép>.rs`. Monté par
 /// `#[path]` (répertoire généré) ou inclus par le module `.rs` qui possède le
 /// répertoire (répertoire mixte).
@@ -285,13 +307,16 @@ fn dir_items(p: &Project, gen_dir: &Path, rel: &Path, code: &mut String) {
         if r.module.is_empty() {
             continue;
         }
+        let a = mod_attrs(r);
+        let vis = p.module_vis(&r.rel.with_extension(""));
         let _ = writeln!(
             code,
-            "#[path = {}] pub mod {};",
+            "{a}#[path = {}] {vis} mod {};",
             lit(&gen_path(gen_dir, &r.rel)),
             r.name
         );
-        let _ = writeln!(code, "#[allow(unused_imports)] pub use self::{}::*;", r.name);
+        let cfgs = a.replace("#[allow(clippy::module_inception)] ", "");
+        let _ = writeln!(code, "{cfgs}#[allow(unused_imports)] {vis} use self::{}::*;", r.name);
     }
     for s in &d.subdirs {
         let sub = &p.dirs[s];
@@ -305,7 +330,8 @@ fn dir_items(p: &Project, gen_dir: &Path, rel: &Path, code: &mut String) {
             continue;
         }
         let name = s.file_name().unwrap_or_default().to_string_lossy();
-        let _ = writeln!(code, "#[path = {}] pub mod {name};", lit(&dir_file(gen_dir, s)));
+        let vis = p.module_vis(s);
+        let _ = writeln!(code, "#[path = {}] {vis} mod {name};", lit(&dir_file(gen_dir, s)));
     }
     for &i in &d.auto_rs {
         let a = &p.auto_rs[i];

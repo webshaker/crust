@@ -67,6 +67,42 @@ fn doc_attr(comment: &str, style: DocStyle) -> String {
     format!("#{bang}[doc = {body:?}]")
 }
 
+/// `include_str!("../x")`, `include_bytes!`, `include!` avec un chemin relatif :
+/// rustc le résoudrait depuis le fichier généré (dans `OUT_DIR`). On le rend
+/// absolu, relatif au `.rsc` d'origine. Tous les tokens sont examinés, y compris
+/// dans les corps de fonctions.
+fn include_rewrites(t: &Toks, source: &SourceInfo) -> Vec<(Span, String)> {
+    let dir = source.file.parent().unwrap_or(std::path::Path::new("/"));
+    let mut out = Vec::new();
+    for p in 0..t.len().saturating_sub(3) {
+        if !matches!(t.text(p), "include_str" | "include_bytes" | "include")
+            || t.kind(p) != Some(TokenKind::Ident)
+            || !t.is_punct(p + 1, '!')
+            || !t.is_punct(p + 2, '(')
+            || t.kind(p + 3) != Some(TokenKind::Literal)
+            || !(t.is_punct(p + 4, ')') || t.is_punct(p + 4, ','))
+        {
+            continue;
+        }
+        let lit = t.text(p + 3);
+        let Some(value) = lit.strip_prefix('"').and_then(|l| l.strip_suffix('"')) else {
+            continue;
+        };
+        if value.contains('\\') && !value.contains("\\\\") {
+            continue; // échappements autres que `\\` : on ne touche pas
+        }
+        let value = value.replace("\\\\", "\\");
+        let path = std::path::Path::new(&value);
+        let drive = value.as_bytes().get(1) == Some(&b':');
+        if path.is_absolute() || drive {
+            continue;
+        }
+        let abs = crate::resolve::normalize(&dir.join(path));
+        out.push((t.span(p + 3), format!("{:?}", abs.display().to_string())));
+    }
+    out
+}
+
 /// Texte d'une plage de tokens sur une ligne (pour les messages).
 pub(crate) fn oneline_text(t: &Toks, r: TokRange) -> String {
     let mut s = String::new();
@@ -83,6 +119,8 @@ struct Emitter<'a> {
     src: &'a str,
     out: String,
     map: SourceMap,
+    /// Littéraux à remplacer partout où ils sont recopiés (triés par position).
+    rewrites: Vec<(Span, String)>,
 }
 
 impl Emitter<'_> {
@@ -99,6 +137,27 @@ impl Emitter<'_> {
     }
 
     fn copy(&mut self, span: Span) {
+        if span.is_empty() {
+            return;
+        }
+        let mut pos = span.start;
+        let first = self.rewrites.partition_point(|(r, _)| r.start < span.start);
+        let inside: Vec<(Span, String)> = self.rewrites[first..]
+            .iter()
+            .take_while(|(r, _)| r.end <= span.end)
+            .cloned()
+            .collect();
+        for (r, text) in inside {
+            self.copy_raw(Span::new(pos, r.start));
+            let start = self.out.len();
+            self.out.push_str(&text);
+            self.seg(start, r, SegmentKind::Synthesized, false);
+            pos = r.end;
+        }
+        self.copy_raw(Span::new(pos, span.end));
+    }
+
+    fn copy_raw(&mut self, span: Span) {
         if span.is_empty() {
             return;
         }
@@ -129,8 +188,17 @@ impl Emitter<'_> {
                 }
                 Piece::Src(span, primary) => {
                     let start = self.out.len();
-                    self.out.push_str(&self.src[span.start..span.end]);
-                    self.seg(start, *span, SegmentKind::Copied, *primary);
+                    match self.rewrites.iter().find(|(r, _)| r == span) {
+                        Some((_, text)) => {
+                            let text = text.clone();
+                            self.out.push_str(&text);
+                            self.seg(start, *span, SegmentKind::Synthesized, false);
+                        }
+                        None => {
+                            self.out.push_str(&self.src[span.start..span.end]);
+                            self.seg(start, *span, SegmentKind::Copied, *primary);
+                        }
+                    }
                 }
             }
         }
@@ -180,6 +248,11 @@ pub(crate) fn emit(
             src: t.src,
             out: String::with_capacity(t.src.len() + t.src.len() / 4),
             map: SourceMap::default(),
+            rewrites: options
+                .source
+                .as_ref()
+                .map(|s| include_rewrites(t, s))
+                .unwrap_or_default(),
         },
         diags: Vec::new(),
         resolver,
@@ -336,10 +409,10 @@ impl Cx<'_, '_> {
 
     /// La `struct` générée : sur une seule ligne, ou lisible (`natural`), avec
     /// attributs et champs recopiés tels quels, commentaires de doc compris.
-    fn struct_def(&self, c: &Class, s: &mut Synth, natural: bool) {
+    fn struct_def(&self, c: &Class, s: &mut Synth, natural: bool, with_attrs: bool) {
         let t = self.t;
         let origin = t.span(c.name);
-        for attr in &c.attrs {
+        for attr in c.attrs.iter().filter(|_| with_attrs) {
             if natural {
                 s.src(t.range_span(attr.range), false);
                 s.text("\n", origin);
@@ -404,9 +477,15 @@ impl Cx<'_, '_> {
         let t = self.t;
         let cspan = t.range_span(c.range);
         let header_start = t.span(c.header).start;
-        self.e.blank(Span::new(cspan.start, header_start));
+        // Les attributs restent sur leurs lignes : ils s'appliquent à la `struct`,
+        // écrite sur la ligne de l'en-tête. Même sans remappage, rustc situe donc
+        // la définition (« struct X defined here ») sur la ligne `class X`, et une
+        // erreur de `#[derive]` sur la ligne du `#[derive]`.
+        self.e.copy(Span::new(cspan.start, header_start));
 
         let mut h = Synth::default();
+        self.struct_def(c, &mut h, false, false);
+        h.text(" ", t.span(c.name));
         self.inherent_header(c, &mut h);
         for diag in &c.header_errors {
             h.text(" ", diag.span);
@@ -435,11 +514,6 @@ impl Cx<'_, '_> {
         }
         let close = t.span(c.close);
         self.e.copy(Span::new(pos, close.end));
-
-        let mut s = Synth::default();
-        s.text(" ", t.span(c.name));
-        self.struct_def(c, &mut s, false);
-        self.e.synth(&s);
     }
 
     fn trait_impl_lines(&mut self, c: &Class, ti: &TraitImpl, gap: Span) {
@@ -478,7 +552,7 @@ impl Cx<'_, '_> {
     fn class_natural(&mut self, c: &Class) {
         let t = self.t;
         let mut s = Synth::default();
-        self.struct_def(c, &mut s, true);
+        self.struct_def(c, &mut s, true, true);
         s.text("\n", t.span(c.name));
         self.e.synth(&s);
 

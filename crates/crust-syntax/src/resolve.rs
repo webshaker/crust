@@ -76,7 +76,7 @@ impl FsResolver {
 }
 
 /// Normalisation lexicale (`a/./b/../c` → `a/c`), sans toucher au disque.
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in path.components() {
         match c {
@@ -90,14 +90,13 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// Fichier visé par un chemin d'import : (chemin canonique, chemin relatif à `src_root`).
-///
-/// `./` et `../` sont relatifs au fichier courant, `@/` à `src_root` ; sans
-/// extension, `.rsc` puis `.rs` (les deux à la fois : ambigu).
-pub fn resolve_file(src_root: &Path, current_file: &Path, path: &str) -> Result<(PathBuf, PathBuf), ResolveError> {
-    let base = if let Some(rest) = path.strip_prefix("@/") {
+/// Chemin visé, normalisé, avant recherche du fichier.
+fn base_path(src_root: &Path, current_file: &Path, path: &str) -> Result<PathBuf, ResolveError> {
+    let base = if path == "@" || path == "@/" {
+        src_root.to_path_buf()
+    } else if let Some(rest) = path.strip_prefix("@/") {
         src_root.join(rest)
-    } else if path.starts_with("./") || path.starts_with("../") {
+    } else if path.starts_with("./") || path.starts_with("../") || path == "." || path == ".." {
         current_file.parent().unwrap_or(Path::new("/")).join(path)
     } else {
         return Err(ResolveError::BadPrefix);
@@ -106,6 +105,87 @@ pub fn resolve_file(src_root: &Path, current_file: &Path, path: &str) -> Result<
     if !base.starts_with(normalize(src_root)) {
         return Err(ResolveError::OutsideSrc);
     }
+    Ok(base)
+}
+
+/// Cible d'un `import` : un fichier, ou un dossier (`"./robot/"`, `"@/robot"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImportTarget {
+    File {
+        canonical: PathBuf,
+        rel: PathBuf,
+    },
+    /// Chemin relatif à `src_root` (vide pour `src/` lui-même).
+    Dir {
+        rel: PathBuf,
+    },
+}
+
+/// Comme [`resolve_file`], mais accepte aussi un dossier : un chemin terminé par
+/// `/`, ou sans fichier `.rsc` / `.rs` correspondant. Un fichier a la priorité.
+pub fn resolve_target(src_root: &Path, current_file: &Path, path: &str) -> Result<ImportTarget, ResolveError> {
+    let dir_only = path.ends_with('/') || matches!(path, "." | ".." | "@");
+    if !dir_only {
+        match resolve_file(src_root, current_file, path) {
+            Ok((canonical, rel)) => return Ok(ImportTarget::File { canonical, rel }),
+            Err(ResolveError::NotFound { .. }) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    let base = base_path(src_root, current_file, path)?;
+    if !base.is_dir() {
+        return Err(ResolveError::NotFound {
+            tried: vec![base.display().to_string()],
+        });
+    }
+    let root = src_root.canonicalize().map_err(|_| ResolveError::OutsideSrc)?;
+    let canonical = base.canonicalize().map_err(|_| ResolveError::OutsideSrc)?;
+    let rel = canonical
+        .strip_prefix(&root)
+        .map_err(|_| ResolveError::OutsideSrc)?
+        .to_path_buf();
+    Ok(ImportTarget::Dir { rel })
+}
+
+/// `robot/capteurs` → `crate::robot::capteurs` (dossier de modules).
+pub fn dir_module_path(rel: &Path) -> Result<String, ResolveError> {
+    let mut parts = vec!["crate".to_string()];
+    for comp in rel.iter().filter_map(|c| c.to_str()) {
+        if !names::is_valid_ident(comp) {
+            return Err(ResolveError::InvalidName {
+                component: comp.to_string(),
+            });
+        }
+        parts.push(comp.to_string());
+    }
+    Ok(parts.join("::"))
+}
+
+/// Noms visibles par le chemin court d'un dossier : items de ses `.rsc`, et noms
+/// de ses sous-modules. `None` s'il contient des `.rs` (items inconnus sans macros).
+pub fn dir_exports(dir: &Path) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            names.push(e.file_name().to_string_lossy().into_owned());
+        } else if p.extension().is_some_and(|x| x == "rsc") {
+            let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+            names.push(names::to_snake_case(&stem));
+            names.extend(exports_of(&p)?);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            return None;
+        }
+    }
+    Some(names)
+}
+
+/// Fichier visé par un chemin d'import : (chemin canonique, chemin relatif à `src_root`).
+///
+/// `./` et `../` sont relatifs au fichier courant, `@/` à `src_root` ; sans
+/// extension, `.rsc` puis `.rs` (les deux à la fois : ambigu).
+pub fn resolve_file(src_root: &Path, current_file: &Path, path: &str) -> Result<(PathBuf, PathBuf), ResolveError> {
+    let base = base_path(src_root, current_file, path)?;
     let candidates: Vec<PathBuf> = match base.extension().and_then(|e| e.to_str()) {
         Some("rsc" | "rs") => vec![base.clone()],
         _ => vec![base.with_extension("rsc"), base.with_extension("rs")],
@@ -148,11 +228,16 @@ pub fn exports_of(file: &Path) -> Option<Vec<String>> {
 
 impl Resolver for FsResolver {
     fn resolve(&self, path: &str) -> Result<Resolved, ResolveError> {
-        let (target, rel) = resolve_file(&self.src_root, &self.current_file, path)?;
-        Ok(Resolved {
-            module_path: module_path(&rel)?,
-            exports: exports_of(&target),
-        })
+        match resolve_target(&self.src_root, &self.current_file, path)? {
+            ImportTarget::File { canonical, rel } => Ok(Resolved {
+                module_path: module_path(&rel)?,
+                exports: exports_of(&canonical),
+            }),
+            ImportTarget::Dir { rel } => Ok(Resolved {
+                module_path: dir_module_path(&rel)?,
+                exports: dir_exports(&self.src_root.join(&rel)),
+            }),
+        }
     }
 }
 

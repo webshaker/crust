@@ -12,3 +12,20 @@ rust-analyzer et `crust-lsp`.
 
 Prérequis : extension rust-analyzer, `crust-lsp` et `cargo-crust` installés
 (`cargo install --path crates/crust-lsp` et `--path crates/cargo-crust`).
+
+## Installation depuis WSL, côté Windows
+
+`code --install-extension` refuse un chemin `\\wsl.localhost\…` : copier
+d'abord le `.vsix` sur un disque Windows, puis l'installer.
+
+```powershell
+copy \\wsl.localhost\Ubuntu\home\rtx\crust\editors\vscode\crust-0.1.1.vsix $env:TEMP
+code --install-extension $env:TEMP\crust-0.1.1.vsix
+```
+
+## Débogage
+
+Points d'arrêt dans les `.rsc` avec CodeLLDB : l'extension ajoute le `sourceMap`
+des copies générées vers `src/`, et choisit `"breakpointMode": "file"` si la
+configuration ne précise rien (le paquet est compilé plusieurs fois : binaire,
+tests).
