@@ -60,6 +60,18 @@ pub fn init_package(dir: &Path) -> Result<Vec<String>, String> {
         Ok(_) => {}
     }
 
+    // Binaires `src/bin/<nom>.rsc` : Cargo ne découvre que les `.rs`.
+    for e in std::fs::read_dir(dir.join("src/bin")).into_iter().flatten().flatten() {
+        let path = e.path();
+        let rs = path.with_extension("rs");
+        if path.extension().is_some_and(|x| x == "rsc") && !rs.exists() {
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            let line = ROOT_LINE.replace("{root}", &format!("root_bin_{stem}.rs"));
+            std::fs::write(&rs, format!("{line}\n")).map_err(|e| e.to_string())?;
+            done.push(format!("src/bin/{stem}.rs : créé (racine de src/bin/{stem}.rsc)"));
+        }
+    }
+
     for (file, root) in [("src/main.rs", "root_main.rs"), ("src/lib.rs", "root_lib.rs")] {
         let path = dir.join(file);
         let Ok(text) = std::fs::read_to_string(&path) else {

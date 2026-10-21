@@ -199,16 +199,13 @@ impl Package {
             }),
             Some(target) => {
                 // Racine : le `.rs` racine reçoit le code à la place de son `include!`.
-                let stub_name = match target {
-                    crust_build::Target::Lib => "lib.rs",
-                    crust_build::Target::Bin => "main.rs",
-                };
-                let stub_path = self.manifest_dir.join("src").join(stub_name);
+                let root = self.project.root(target)?;
+                let stub_path = root.rs.clone();
                 let stub = docs
                     .get(&stub_path)
                     .cloned()
                     .or_else(|| std::fs::read_to_string(&stub_path).ok())?;
-                let (start, end) = include_statement(&stub, target.root_file())?;
+                let (start, end) = crust_build::include_statement(&stub, &root.root_file)?;
                 let decls = crust_build::root_decls(&self.project, &self.gen_dir, target);
                 let doc_text = format!("{}{}\n{decls}{}", &stub[..start], out.code, &stub[end..]);
                 Some(FileState {
@@ -240,14 +237,6 @@ impl Package {
             }
         })
     }
-}
-
-/// Plage de l'instruction `include!(…"/crust/<root>"…);` dans le `.rs` racine.
-fn include_statement(stub: &str, root: &str) -> Option<(usize, usize)> {
-    let at = stub.find(&format!("/crust/{root}"))?;
-    let start = stub[..at].rfind("include!")?;
-    let end = at + stub[at..].find(';')? + 1;
-    Some((start, end))
 }
 
 /// Paquets du workspace qui utilisent `crust-build`, avec leur `OUT_DIR` tel que

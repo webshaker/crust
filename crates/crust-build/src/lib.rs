@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 
 use crust_syntax::{Layout, Options, SourceInfo, transpile_with};
 
-use tree::{BuildResolver, DirKind};
-pub use tree::{Project, RscFile, Target};
+use tree::BuildResolver;
+pub use tree::{AutoRs, Dir, DirKind, Project, Root, RsModule, RscFile, Target};
 
 pub struct Config {
     /// Répertoire du paquet (celui de `Cargo.toml`).
@@ -81,6 +81,23 @@ pub fn transpile_rsc(project: &Project, r: &tree::RscFile) -> Result<crust_synta
     Ok(transpile_rsc_text(project, r, &text))
 }
 
+/// Traduction lisible (`struct` puis `impl`) d'un `.rsc`, pour `cargo crust eject` :
+/// les `mod x;` sont laissés tels quels (le fichier `.rs` produit prend la place
+/// du `.rsc` dans `src/`).
+pub fn transpile_rsc_natural(project: &Project, r: &tree::RscFile) -> Result<crust_syntax::Output, String> {
+    let text = std::fs::read_to_string(&r.abs).map_err(|e| format!("{} : {e}", r.abs.display()))?;
+    let resolver = BuildResolver {
+        project,
+        current: r.abs.clone(),
+        target: r.target(project.owner),
+    };
+    let options = Options {
+        layout: Layout::Natural,
+        source: None,
+    };
+    Ok(transpile_with(&text, &options, &resolver))
+}
+
 /// [`transpile_rsc`] sur un texte en mémoire (document ouvert dans l'éditeur).
 pub fn transpile_rsc_text(project: &Project, r: &tree::RscFile, text: &str) -> crust_syntax::Output {
     let resolver = BuildResolver {
@@ -122,7 +139,7 @@ pub fn run() {
             }
         }
         Err(e) => {
-            fallback(&cfg.out_dir, &e);
+            fallback(&cfg, &e);
             println!("cargo::warning=crust-build : {}", e.replace('\n', " "));
         }
     }
@@ -130,12 +147,26 @@ pub fn run() {
 
 /// En cas d'échec, les fichiers racines contiennent l'erreur : `include!` ne
 /// tombe pas sur un fichier absent et le message reste lisible.
-fn fallback(out_dir: &Path, error: &str) {
-    let gen_dir = out_dir.join("crust");
+fn fallback(cfg: &Config, error: &str) {
+    let gen_dir = cfg.out_dir.join("crust");
     let _ = std::fs::create_dir_all(&gen_dir);
-    for root in [Target::Lib, Target::Bin] {
+    let mut files = vec!["root_lib.rs".to_string(), "root_main.rs".to_string()];
+    for e in std::fs::read_dir(cfg.manifest_dir.join("src/bin"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let path = e.path();
+        if path.extension().is_some_and(|x| x == "rs") {
+            files.push(format!(
+                "root_bin_{}.rs",
+                path.file_stem().unwrap_or_default().to_string_lossy()
+            ));
+        }
+    }
+    for file in files {
         let _ = std::fs::write(
-            gen_dir.join(root.root_file()),
+            gen_dir.join(file),
             format!("compile_error!({:?});\n", format!("crust-build : {error}")),
         );
     }
@@ -169,6 +200,15 @@ pub fn generate(cfg: &Config) -> Result<Report, String> {
     let src_dir = format!("{}\n", project.src.display());
     write_if_changed(&gen_dir.join("source_dir"), &src_dir, &mut report)?;
     Ok(report)
+}
+
+/// Plage de l'instruction `include!(…"/crust/<cible>"…);` dans un `.rs`
+/// (`cible` : `root_main.rs`, `root_lib.rs` ou `dir/<rép>.rs`).
+pub fn include_statement(text: &str, target: &str) -> Option<(usize, usize)> {
+    let at = text.find(&format!("/crust/{target}\""))?;
+    let start = text[..at].rfind("include!")?;
+    let end = at + text[at..].find(';')? + 1;
+    Some((start, end))
 }
 
 /// Chemin du fichier généré pour le `.rsc` `src/<rel>`.
@@ -205,10 +245,8 @@ pub fn root_decls(p: &Project, gen_dir: &Path, target: Target) -> String {
 /// Fichiers de déclarations générés (hors `.rsc`) : racines et répertoires mixtes.
 pub fn decl_files(p: &Project, gen_dir: &Path) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
-    for (target, exists) in [(Target::Lib, p.has_lib), (Target::Bin, p.has_bin)] {
-        if exists {
-            files.push((gen_dir.join(target.root_file()), root_content(p, gen_dir, target)));
-        }
+    for root in &p.roots {
+        files.push((gen_dir.join(&root.root_file), root_content(p, gen_dir, root.target)));
     }
     for (rel, dir) in &p.dirs {
         if matches!(dir.kind, DirKind::Hosted | DirKind::Generated) && !dir.module.is_empty() {

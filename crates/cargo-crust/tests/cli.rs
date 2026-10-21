@@ -210,3 +210,91 @@ fn explain() {
     assert!(out.status.success());
     assert!(text(&out.stdout).contains("over Moteur(base)"));
 }
+
+/// Copie d'un projet de crust-build sous un nom de répertoire `name`.
+fn fixture(project: &str, name: &str) -> PathBuf {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../crust-build/tests/projects")
+        .join(project);
+    let dst = scratch(name);
+    copy_dir(&src, &dst);
+    dst
+}
+
+fn cargo_plain(dir: &Path, args: &[&str]) -> Output {
+    Command::new("cargo")
+        .args(args)
+        .current_dir(dir)
+        .env(
+            "CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_TARGET_TMPDIR")).join("cli-eject-target"),
+        )
+        .env_remove("RUSTFLAGS")
+        .output()
+        .unwrap()
+}
+
+fn assert_no_crust(dir: &Path) {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                assert!(p.extension().is_none_or(|x| x != "rsc"), "reste {}", p.display());
+                if p.file_name().is_some_and(|n| n == "Cargo.toml" || n == "build.rs")
+                    || p.extension().is_some_and(|x| x == "rs")
+                {
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    assert!(
+                        !text.contains("crust"),
+                        "{} mentionne encore crust :\n{text}",
+                        p.display()
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// T20 : `eject` donne un projet Rust standard qui se comporte à l'identique.
+#[test]
+fn eject_produit_du_rust_standard() {
+    // p1 : racine main.rsc, .rs importé, `mod util;` avec sous-module.
+    let dir = fixture("p1_robot", "eject_p1");
+    let out = crust(&dir, &["eject"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_no_crust(&dir);
+    let run = cargo_plain(&dir, &["run", "-q"]);
+    assert!(run.status.success(), "{}", text(&run.stderr));
+    assert_eq!(
+        text(&run.stdout),
+        std::fs::read_to_string(dir.join("expected.stdout")).unwrap()
+    );
+
+    // p2 : lib + bin en .rsc, utilisée par une crate Rust ordinaire.
+    let ws = fixture("p2_workspace", "eject_p2");
+    let out = crust(&ws.join("robotlib"), &["eject"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_no_crust(&ws);
+    let run = cargo_plain(&ws, &["run", "-q", "-p", "robot-lib", "--bin", "robot-lib"]);
+    assert_eq!(text(&run.stdout), "bin : meme moteur = true\n", "{}", text(&run.stderr));
+    let run = cargo_plain(&ws, &["run", "-q", "-p", "app"]);
+    assert_eq!(text(&run.stdout), "app : moteur 7\n", "{}", text(&run.stderr));
+    let run = cargo_plain(&ws, &["run", "-q", "-p", "robot-lib", "--bin", "outil"]);
+    assert_eq!(text(&run.stdout), "outil : moteur 7\n", "{}", text(&run.stderr));
+
+    // p3 : projet Rust existant, répertoire mixte (include dans outils.rs).
+    let dir = fixture("p3_mixed", "eject_p3");
+    let out = crust(&dir, &["eject"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_no_crust(&dir);
+    let run = cargo_plain(&dir, &["run", "-q"]);
+    assert_eq!(
+        text(&run.stdout),
+        std::fs::read_to_string(dir.join("expected.stdout")).unwrap(),
+        "{}",
+        text(&run.stderr)
+    );
+}

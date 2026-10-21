@@ -54,13 +54,12 @@ fn is_rsc(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "rsc")
 }
 
-/// `.rs` racine dont le contenu est fourni par Crust (`main.rs` à côté de `main.rsc`).
+/// `.rs` racine dont le contenu est fourni par Crust : `main.rs` à côté de
+/// `main.rsc`, `lib.rs` / `lib.rsc`, `bin/<nom>.rs` / `bin/<nom>.rsc`.
 fn is_managed_root(path: &Path) -> bool {
-    match path.file_name().and_then(|n| n.to_str()) {
-        Some("main.rs") => path.with_file_name("main.rsc").is_file(),
-        Some("lib.rs") => path.with_file_name("lib.rsc").is_file(),
-        _ => false,
-    }
+    let root_name = matches!(path.file_name().and_then(|n| n.to_str()), Some("main.rs" | "lib.rs"));
+    let in_bin = path.parent().and_then(Path::file_name).is_some_and(|d| d == "bin");
+    path.extension().is_some_and(|e| e == "rs") && (root_name || in_bin) && path.with_extension("rsc").is_file()
 }
 
 fn uri_path(v: &Value) -> Option<PathBuf> {

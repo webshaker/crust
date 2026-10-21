@@ -10,16 +10,23 @@ use crust_syntax::{Layout, ModDecl, Options, ResolveError, Resolved, Resolver, S
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Target {
     Lib,
+    /// `src/main.rs`.
     Bin,
+    /// `src/bin/<nom>.rs` : indice dans [`Project::roots`].
+    ExtraBin(u32),
 }
 
-impl Target {
-    pub fn root_file(self) -> &'static str {
-        match self {
-            Target::Lib => "root_lib.rs",
-            Target::Bin => "root_main.rs",
-        }
-    }
+/// Racine de crate du paquet : un `.rs` (stub ou écrit à la main) qui inclut
+/// `root_file`, et sa racine `.rsc` éventuelle.
+#[derive(Clone, Debug)]
+pub struct Root {
+    pub target: Target,
+    /// `.rs` racine (chemin absolu).
+    pub rs: PathBuf,
+    /// Racine `.rsc` correspondante, relative à `src/` (`main.rsc`, `bin/outil.rsc`).
+    pub rsc_rel: PathBuf,
+    /// Fichier généré à inclure : `root_main.rs`, `root_lib.rs`, `root_bin_<nom>.rs`.
+    pub root_file: String,
 }
 
 #[derive(Debug)]
@@ -28,7 +35,7 @@ pub struct RscFile {
     pub rel: PathBuf,
     pub abs: PathBuf,
     pub canonical: PathBuf,
-    /// `Some` pour `main.rsc` / `lib.rsc`.
+    /// `Some` pour une racine : `main.rsc`, `lib.rsc`, `bin/<nom>.rsc`.
     pub root: Option<Target>,
     /// Nom du module (fichiers non racines).
     pub name: String,
@@ -89,6 +96,8 @@ pub struct Project {
     pub lib_name: String,
     pub has_lib: bool,
     pub has_bin: bool,
+    /// Racines de crate existantes : lib, main, puis `src/bin/*.rs`.
+    pub roots: Vec<Root>,
     /// Cible qui contient les modules (la lib s'il y en a une).
     pub owner: Target,
     pub rsc: Vec<RscFile>,
@@ -108,7 +117,7 @@ fn walk(dir: &Path, rel: &Path, out: &mut Vec<PathBuf>) {
         let path = e.path();
         let rel = rel.join(e.file_name());
         if path.is_dir() {
-            // `src/bin/` : binaires supplémentaires, pas encore pris en charge.
+            // `src/bin/` : racines de binaires, traitées à part.
             if rel != Path::new("bin") {
                 walk(&path, &rel, out);
             }
@@ -156,11 +165,46 @@ impl Project {
             return Err(format!("ni `src/lib.rs` ni `src/main.rs` dans {}", src.display()));
         }
         let owner = if has_lib { Target::Lib } else { Target::Bin };
+        let mut roots = Vec::new();
+        let root = |target, rs: &str, rsc: &str, file: &str| Root {
+            target,
+            rs: src.join(rs),
+            rsc_rel: PathBuf::from(rsc),
+            root_file: file.to_string(),
+        };
+        if has_lib {
+            roots.push(root(Target::Lib, "lib.rs", "lib.rsc", "root_lib.rs"));
+        }
+        if has_bin {
+            roots.push(root(Target::Bin, "main.rs", "main.rsc", "root_main.rs"));
+        }
+        let mut bins: Vec<PathBuf> = std::fs::read_dir(src.join("bin"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rs" || x == "rsc"))
+            .collect();
+        bins.sort();
+        for b in &bins {
+            let stem = b.file_stem().unwrap_or_default().to_string_lossy();
+            let is_rs = b.extension().is_some_and(|x| x == "rs");
+            if is_rs {
+                let target = Target::ExtraBin(roots.len() as u32);
+                roots.push(root(
+                    target,
+                    &format!("bin/{stem}.rs"),
+                    &format!("bin/{stem}.rsc"),
+                    &format!("root_bin_{stem}.rs"),
+                ));
+            }
+        }
         let mut p = Project {
             src: src.clone(),
             lib_name: lib_name.to_string(),
             has_lib,
             has_bin,
+            roots,
             owner,
             rsc: Vec::new(),
             rs_modules: Vec::new(),
@@ -169,20 +213,22 @@ impl Project {
             root_errors: Vec::new(),
             warnings: Vec::new(),
         };
-        p.check_roots();
 
         // 1. Fichiers .rsc et leurs chemins de module.
         let mut rels = Vec::new();
         walk(&src, Path::new(""), &mut rels);
+        rels.extend(
+            bins.iter()
+                .filter(|b| b.extension().is_some_and(|x| x == "rsc"))
+                .filter_map(|b| b.strip_prefix(&src).ok().map(Path::to_path_buf)),
+        );
         for rel in rels {
             let abs = src.join(&rel);
             let canonical = abs.canonicalize().unwrap_or_else(|_| abs.clone());
-            let root = match rel.to_str() {
-                Some("lib.rsc") => Some(Target::Lib),
-                Some("main.rsc") => Some(Target::Bin),
-                _ => None,
-            };
-            if root == Some(Target::Lib) && !has_lib || root == Some(Target::Bin) && !has_bin {
+            let root = p.roots.iter().find(|r| r.rsc_rel == rel).map(|r| r.target);
+            // Racine `.rsc` sans son `.rs` : ignorée (avertissement dans `check_roots`).
+            if root.is_none() && (rel == Path::new("lib.rsc") || rel == Path::new("main.rsc") || rel.starts_with("bin"))
+            {
                 continue;
             }
             let stem = rel.file_stem().unwrap_or_default().to_string_lossy();
@@ -201,24 +247,20 @@ impl Project {
             });
         }
 
+        p.check_roots();
+
         // 2. Modules .rs déclarés par les racines et par les `mod x;` des .rsc.
         let mut visited = HashSet::new();
-        for target in [Target::Lib, Target::Bin] {
-            let (exists, rs, rsc) = match target {
-                Target::Lib => (has_lib, "lib.rs", "lib.rsc"),
-                Target::Bin => (has_bin, "main.rs", "main.rsc"),
-            };
-            if !exists {
-                continue;
-            }
-            p.scan_rs(&src.join(rs), "crate", &src, &src, target, &mut visited);
-            if let Ok(text) = std::fs::read_to_string(src.join(rsc)) {
+        for root in p.roots.clone() {
+            let dir = root.rs.parent().unwrap_or(&src).to_path_buf();
+            p.scan_rs(&root.rs, "crate", &dir, &dir, root.target, &mut visited);
+            if let Ok(text) = std::fs::read_to_string(src.join(&root.rsc_rel)) {
                 p.scan_decls(
                     &crust_syntax::mod_decls(&text),
                     "crate",
-                    &src,
-                    &src,
-                    target,
+                    &dir,
+                    &dir,
+                    root.target,
                     &mut visited,
                 );
             }
@@ -254,21 +296,51 @@ impl Project {
         Ok(p)
     }
 
+    /// Racine d'une cible.
+    pub fn root(&self, target: Target) -> Option<&Root> {
+        self.roots.iter().find(|r| r.target == target)
+    }
+
     fn check_roots(&mut self) {
-        for (target, rs, rsc) in [(Target::Lib, "lib.rs", "lib.rsc"), (Target::Bin, "main.rs", "main.rsc")] {
-            let rs_path = self.src.join(rs);
-            if self.src.join(rsc).is_file() && !rs_path.is_file() {
+        let mut orphans: Vec<PathBuf> = ["lib.rsc", "main.rsc"].iter().map(PathBuf::from).collect();
+        orphans.extend(
+            std::fs::read_dir(self.src.join("bin"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "rsc"))
+                .map(|e| Path::new("bin").join(e.file_name())),
+        );
+        for rsc in orphans {
+            if self.src.join(&rsc).is_file() && !self.roots.iter().any(|r| r.rsc_rel == rsc) {
+                let rs = rsc.with_extension("rs");
+                let file = if rsc == Path::new("lib.rsc") {
+                    "root_lib.rs".to_string()
+                } else if rsc == Path::new("main.rsc") {
+                    "root_main.rs".to_string()
+                } else {
+                    format!("root_bin_{}.rs", rsc.file_stem().unwrap_or_default().to_string_lossy())
+                };
                 self.warnings.push(format!(
-                    "`src/{rsc}` est ignoré : créez `src/{rs}` contenant `include!(concat!(env!(\"OUT_DIR\"), \"/crust/{}\"));`",
-                    target.root_file()
+                    "`src/{}` est ignoré : créez `src/{}` contenant `include!(concat!(env!(\"OUT_DIR\"), \"/crust/{file}\"));` (ou lancez `cargo crust init`)",
+                    rsc.display(),
+                    rs.display()
                 ));
             }
-            if let Ok(text) = std::fs::read_to_string(&rs_path)
-                && !text.contains(&format!("/crust/{}", target.root_file()))
+        }
+        // L'inclusion est nécessaire si la racine a son `.rsc`, ou si elle porte les
+        // modules d'un projet qui contient des `.rsc` (un binaire en pur Rust n'en a pas besoin).
+        let has_modules = self.rsc.iter().any(|r| r.root.is_none());
+        for root in &self.roots {
+            let needed = self.src.join(&root.rsc_rel).is_file() || (root.target == self.owner && has_modules);
+            if needed
+                && let Ok(text) = std::fs::read_to_string(&root.rs)
+                && !text.contains(&format!("/crust/{}", root.root_file))
             {
                 self.warnings.push(format!(
-                    "`src/{rs}` ne contient pas la ligne `include!(concat!(env!(\"OUT_DIR\"), \"/crust/{}\"));` : les modules Crust ne sont pas montés",
-                    target.root_file()
+                    "`{}` ne contient pas la ligne `include!(concat!(env!(\"OUT_DIR\"), \"/crust/{}\"));` : les modules Crust ne sont pas montés",
+                    root.rs.display(),
+                    root.root_file
                 ));
             }
         }
@@ -595,9 +667,11 @@ impl Project {
     pub fn module_of(&self, file: &Path, from: Target) -> Result<String, ResolveError> {
         let fix = |module: &str, target: Target| -> Result<String, ResolveError> {
             match (target, from) {
-                (Target::Lib, Target::Bin) => Ok(module.replacen("crate", &self.lib_name, 1)),
-                (Target::Bin, Target::Lib) => Err(ResolveError::Unsupported),
-                _ => Ok(module.to_string()),
+                (a, b) if a == b => Ok(module.to_string()),
+                // Un binaire voit les modules de la lib par le nom de la crate.
+                (Target::Lib, _) => Ok(module.replacen("crate", &self.lib_name, 1)),
+                // Modules du binaire principal (sans lib) : invisibles des autres cibles.
+                _ => Err(ResolveError::Unsupported),
             }
         };
         if let Some(r) = self.rsc_by_canonical(file) {

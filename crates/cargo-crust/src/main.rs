@@ -1,6 +1,7 @@
 //! `cargo crust` : sous-commande cargo des projets Crust (section 17.4).
 
 mod cargo;
+mod eject;
 mod explain;
 mod init;
 mod remap;
@@ -22,7 +23,9 @@ usage : cargo crust <commande> [arguments]
   expand <fichier.rsc> [--lines] [--map]
                  affiche le Rust standard équivalent
   explain <CRxxxx>
-                 explique une erreur Crust";
+                 explique une erreur Crust
+  eject [--dry-run] [--force]
+                 convertit le paquet en Rust standard (retire Crust)";
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,6 +50,7 @@ fn main() -> ExitCode {
             }
         },
         Some("init") => init::init(rest),
+        Some("eject") => eject::eject(rest),
         Some("new") => init::new(rest),
         Some("--version" | "-V") => {
             println!("cargo-crust {}", env!("CARGO_PKG_VERSION"));

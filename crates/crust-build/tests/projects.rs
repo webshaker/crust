@@ -101,10 +101,15 @@ fn p1_robot_exemple_du_cahier_des_charges() {
 fn p2_lib_bin_et_crate_rust_ordinaire() {
     let dir = project("p2_workspace");
     assert_eq!(
-        stdout_ok(&dir, &["run", "-q", "-p", "robot-lib"]),
+        stdout_ok(&dir, &["run", "-q", "-p", "robot-lib", "--bin", "robot-lib"]),
         "bin : meme moteur = true\n"
     );
     assert_eq!(stdout_ok(&dir, &["run", "-q", "-p", "app"]), "app : moteur 7\n");
+    // Binaire supplémentaire src/bin/outil.rsc.
+    assert_eq!(
+        stdout_ok(&dir, &["run", "-q", "-p", "robot-lib", "--bin", "outil"]),
+        "outil : moteur 7\n"
+    );
 }
 
 #[test]

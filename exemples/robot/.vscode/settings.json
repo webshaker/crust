@@ -1,0 +1,3 @@
+{
+    "rust-analyzer.server.path": "/home/rtx/.cargo/bin/crust-lsp"
+}
