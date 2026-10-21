@@ -15,8 +15,10 @@ Destinataire : un agent (ou un développeur) qui travaille sur un projet Rust ex
 | `cargo build` simple : bonne ligne et bonne colonne, mais chemin de la copie générée dans `target/` | ✅ (voir 6) |
 | `cargo crust new`, `cargo crust init` (installation automatique), `cargo crust explain CRxxxx` | ✅ |
 | **VS Code** (rust-analyzer via `crust-lsp` + extension « Crust ») : complétion, survol, définition, références, renommage, diagnostics, coloration dans les `.rsc` | ✅ (phases P4–P5), après activation dans le workspace (voir 2.5) |
-| `cargo fmt` sur les `.rsc` | ❌ pas encore : rustfmt ignore les `.rsc` |
-| `src/bin/*.rsc`, `.rsc` dans `tests/`, `examples/`, `benches/` | ❌ : ces fichiers restent en `.rs` |
+| `cargo crust fmt` (et formatage à l'enregistrement dans VS Code) | ✅ |
+| `src/bin/*.rsc` (avec `src/bin/<nom>.rs` d'une ligne, créé par `cargo crust init`) | ✅ |
+| `cargo crust eject` : retour à du Rust pur | ✅ |
+| `.rsc` dans `tests/`, `examples/`, `benches/` | ❌ : ces fichiers restent en `.rs` |
 | Publication sur crates.io | ❌ : `crust-build` n'est pas publié, dépendance par chemin local uniquement |
 
 **Conséquence** : la migration est possible, le binaire produit est identique, et l'éditeur fonctionne sur les `.rsc`. Crust reste jeune. Faire la migration :
@@ -83,6 +85,8 @@ cargo crust build | run | test | clippy   # idem ; tous les arguments de cargo s
 cargo crust expand src/robot/Moteur.rsc          # Rust équivalent, formaté
 cargo crust expand --lines src/robot/Moteur.rsc  # version réellement compilée
 cargo crust explain CR0002                       # explication d'une erreur Crust
+cargo crust fmt [--check]                        # formate les .rsc, puis cargo fmt
+cargo crust eject [--dry-run]                    # convertit tout le paquet en Rust standard
 ```
 
 **Utiliser `cargo crust check` / `cargo crust test` plutôt que `cargo check` / `cargo test`** pendant la migration : les messages pointent directement vers le `.rsc` à corriger. `--message-format=json` est accepté et renvoie le JSON de cargo, avec les positions déjà converties vers les `.rsc`.
@@ -239,7 +243,7 @@ import { lire } from "./capteur.rs";                // fonctionne aussi vers un 
    3. adapter les chemins si le nom de module change (par exemple `moteur.rs` → `Moteur.rsc` garde `crate::…::moteur`, mais `motor_ctrl.rs` → `MoteurCtrl.rsc` donne `moteur_ctrl`);
    4. `cargo crust check && cargo crust test && cargo crust clippy --all-targets`;
    5. committer, un commit par module.
-5. **Ne pas** profiter de la migration pour changer la logique, renommer l'API publique ou reformater le code : ce sont des diffs à faire séparément.
+5. **Ne pas** profiter de la migration pour changer la logique ou renommer l'API publique : ce sont des diffs à faire séparément. Lancer `cargo crust fmt` sur les fichiers convertis est en revanche recommandé.
 6. À la fin : mêmes tests au vert, mêmes warnings clippy, même API publique. `cargo crust expand` sur quelques fichiers permet de vérifier que le Rust généré correspond à l'original.
 
 ---
@@ -295,7 +299,7 @@ Pour trouver le fichier à corriger, **retirer le préfixe `…/out/crust/`** : 
 ## 7. Revenir en arrière
 
 - Tout est sur la branche `crust-migration` : `git switch main` suffit.
-- Pour garder la structure mais revenir à du Rust pur, `cargo crust expand` donne le `.rs` équivalent de chaque `.rsc`. Une commande `cargo crust eject` est prévue mais pas encore écrite.
+- Pour garder le travail mais revenir à du Rust pur : `cargo crust eject`. Il convertit chaque `.rsc` en `.rs` lisible, remplace les lignes `include!` par de vrais `mod` et retire `crust-build`. Il refuse de tourner si le dépôt git a des modifications non committées (`--force` pour passer outre). `--dry-run` montre ce qui serait fait.
 
 ---
 

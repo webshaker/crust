@@ -3,6 +3,7 @@
 mod cargo;
 mod eject;
 mod explain;
+mod fmt;
 mod init;
 mod remap;
 mod render;
@@ -24,6 +25,7 @@ usage : cargo crust <commande> [arguments]
                  affiche le Rust standard équivalent
   explain <CRxxxx>
                  explique une erreur Crust
+  fmt [--check]  formate les .rsc (et les .rs avec cargo fmt)
   eject [--dry-run] [--force]
                  convertit le paquet en Rust standard (retire Crust)";
 
@@ -51,6 +53,7 @@ fn main() -> ExitCode {
         },
         Some("init") => init::init(rest),
         Some("eject") => eject::eject(rest),
+        Some("fmt") => fmt::fmt(rest),
         Some("new") => init::new(rest),
         Some("--version" | "-V") => {
             println!("cargo-crust {}", env!("CARGO_PKG_VERSION"));

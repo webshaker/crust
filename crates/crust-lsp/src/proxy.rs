@@ -145,6 +145,19 @@ impl Proxy {
             }
             st.roots = roots;
         }
+        if matches!(method, "textDocument/formatting" | "textDocument/rangeFormatting")
+            && let Some(path) = uri_path(&msg["params"]["textDocument"]["uri"]).filter(|p| is_rsc(p))
+        {
+            let result = if method == "textDocument/formatting" {
+                Self::format_rsc(&st, &path)
+            } else {
+                json!([])
+            };
+            drop(st);
+            self.client
+                .send(&json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            return;
+        }
         let mut src = None;
         if msg.get("params").is_none() {
             st.pending.insert(
@@ -325,6 +338,42 @@ impl Proxy {
             }
             (Some("textDocument/publishDiagnostics"), None) => self.publish_diagnostics(msg),
             _ => self.client.send(&msg),
+        }
+    }
+
+    /// Formatage d'un `.rsc` (rust-analyzer ne sait pas le faire) : une seule
+    /// modification qui remplace tout le document.
+    fn format_rsc(st: &State, path: &Path) -> Value {
+        let Some(text) = st
+            .docs
+            .get(path)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(path).ok())
+        else {
+            return json!([]);
+        };
+        let pkg = st.package_of(path).map(|i| st.packages[i].manifest_dir.clone());
+        let edition = pkg
+            .as_ref()
+            .and_then(|d| std::fs::read_to_string(d.join("Cargo.toml")).ok())
+            .and_then(|t| {
+                t.lines().find_map(|l| {
+                    l.trim()
+                        .strip_prefix("edition")
+                        .map(|v| v.trim_start_matches([' ', '=', '"']).trim_end_matches('"').to_string())
+                })
+            })
+            .unwrap_or_else(|| "2021".into());
+        match crust_syntax::fmt::format(&text, &edition, pkg.as_deref()) {
+            Ok(formatted) if formatted != text => {
+                let end = position_of(&text, text.len(), st.enc);
+                json!([{ "range": { "start": { "line": 0, "character": 0 }, "end": end }, "newText": formatted }])
+            }
+            Ok(_) => json!([]),
+            Err(e) => {
+                eprintln!("crust-lsp : formatage de {} impossible : {e}", path.display());
+                json!([])
+            }
         }
     }
 

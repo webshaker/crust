@@ -8,3 +8,9 @@ crust-build = { path = "../../crates/crust-build" }
 
 # Projet autonome (pas membre du workspace Crust).
 [workspace]
+
+[profile.dev.package.crust-syntax]
+opt-level = 3
+
+[profile.dev.package.crust-build]
+opt-level = 3

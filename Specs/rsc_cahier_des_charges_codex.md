@@ -1427,9 +1427,32 @@ Ne pas considérer une phase comme réussie si les erreurs pointent vers du Rust
   - un fournisseur de configuration de débogage `lldb` qui ajoute le `sourceMap` `<OUT_DIR>/crust/src` → `src`, grâce au fichier `OUT_DIR/crust/source_dir` écrit par `crust-build`.
 
   Exemple prêt à ouvrir : `exemples/robot/`.
+- **P6 et V1.1 : terminés** (2026-10-21).
+  - **`cargo crust eject`** (17.6, T20) :
+    - conversion en `.rs` lisibles formatés par rustfmt, vrais `mod`, attributs internes des racines replacés en tête, `crust-build` retiré;
+    - refuse un dépôt git non committé (`--force`), `--dry-run`;
+    - testé sur p1, p2 (lib + bin + `src/bin` + crate cliente) et p3 (répertoire mixte), qui compilent et se comportent à l'identique avec cargo seul.
+  - **`src/bin/<nom>.rsc`** : racine `root_bin_<nom>.rs`, incluse par `src/bin/<nom>.rs` (créé par `cargo crust init`). Ses `import` vers la lib deviennent `use nom_crate::…`.
+  - **Formatage** (21), `crust_syntax::fmt` : un seul appel à rustfmt par fichier.
+    - rustfmt formate le fichier, chaque classe et chaque `import` y étant remplacé par un marqueur, ainsi que chaque membre placé dans un `struct` / `impl` temporaire;
+    - Crust écrit les en-têtes `class … over …` et `impl Trait` au style rustfmt : `where` sur plusieurs lignes, type des composants `over` formaté;
+    - les commentaires sont conservés, y compris en fin de ligne;
+    - les lignes vides de l'original sont gardées (au plus une);
+    - les attributs internes `#![...]` sont recopiés tels quels (rustfmt les supprime d'un `impl`);
+    - un fichier qui contient une erreur Crust est refusé;
+    - accessible par `cargo crust fmt [--check]` et par `textDocument/formatting` dans `crust-lsp`;
+    - tests : stabilité (formater deux fois ne change rien), sens préservé (Rust généré identique, au formatage près, sur tous les fichiers de test), rendu attendu.
+  - **Performances** (`crates/crust-build/tests/perf.rs`, projet de 500 `.rsc`, release) :
+    - transpileur : 241 Mo/s;
+    - premier build, `crust-build` compris : 1,9 s;
+    - build sans changement : 12 ms;
+    - build script seul : 10 ms. `cargo crust init` ajoute `opt-level = 3` pour `crust-syntax` et `crust-build` seulement ; sans ce réglage, 28 ms;
+    - modification d'un `.rsc` : environ +30 ms par rapport à la modification d'un `.rs` (285 ms);
+    - `cargo crust check` : aucun surcoût mesurable;
+    - latence ajoutée par `crust-lsp` : 0,04 ms (`.rs`) et 0,07 ms (`.rsc`) en médiane, 3 ms au 99e centile.
 - **Non pris en charge pour l'instant** :
-  - `src/bin/*.rsc`;
   - `module-visibility` (12.1.4) : les modules générés sont toujours `pub`;
+  - `.rsc` dans `tests/`, `examples/`, `benches/`;
   - `mod x;` à l'intérieur d'un module inline d'un `.rsc` (chemin approximé).
 
 ---

@@ -10,6 +10,7 @@
 
 pub mod diag;
 mod emit;
+pub mod fmt;
 pub mod lexer;
 pub mod names;
 mod parser;

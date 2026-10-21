@@ -298,3 +298,40 @@ fn eject_produit_du_rust_standard() {
         text(&run.stderr)
     );
 }
+
+#[test]
+fn fmt_formate_les_rsc() {
+    let dir = robot("fmt");
+    let moteur = dir.join("src/robot/Moteur.rsc");
+    let messy = std::fs::read_to_string(&moteur)
+        .unwrap()
+        .replace("    pub vitesse: u32,", "  pub vitesse :u32,");
+    std::fs::write(&moteur, &messy).unwrap();
+
+    let out = crust(&dir, &["fmt", "--check"]);
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stdout).contains("src/robot/Moteur.rsc"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&moteur).unwrap(),
+        messy,
+        "--check ne modifie rien"
+    );
+
+    let out = crust(&dir, &["fmt"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        std::fs::read_to_string(&moteur)
+            .unwrap()
+            .contains("    pub vitesse: u32,")
+    );
+    assert!(crust(&dir, &["fmt", "--check"]).status.success());
+    let run = crust(&dir, &["run", "-q"]);
+    assert_eq!(
+        text(&run.stdout),
+        std::fs::read_to_string(dir.join("expected.stdout")).unwrap()
+    );
+}

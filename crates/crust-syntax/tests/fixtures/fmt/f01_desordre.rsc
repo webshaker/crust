@@ -1,0 +1,23 @@
+import   {Moteur,Etat as E}    from "./Moteur.rsc"  ;
+    pub(crate)   import * from "@/x";
+
+/// Doc
+#[derive(Debug)]   #[allow(dead_code)]
+pub   class   Servo<'a,T:Clone>   over   Moteur ( parent ) , pub(crate)   Uart   where T :Default{
+      pub position :f32,   // degrés
+  nom:&'a str,
+    items : Vec< T >,
+
+
+      pub fn new( nom:&'a str )->Self{Self{parent:todo!(),uart:todo!(),position:0.0,nom,items:vec![]}}
+  // commentaire isolé
+
+  /// Doc de méthode
+  fn   privee (&self){}
+      impl<U>From<U>where U:Into<f32>{fn from(u:U)->Self{todo!()}}
+    unsafe   impl   Send{}
+}
+
+class Vide{}
+
+fn libre( x:u8 )->u8{x+1}

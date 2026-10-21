@@ -439,6 +439,20 @@ fn editeur_sur_un_projet_crust() {
         "{decoded:?}"
     );
 
+    // Formatage d'un .rsc (rust-analyzer ne le fait pas : crust-lsp s'en charge).
+    let messy = moteur.replace("    pub vitesse: u32,", "  pub vitesse :u32,");
+    c.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri(&moteur_path), "version": 2 }, "contentChanges": [{ "text": messy }] }),
+    );
+    let fmt = c.request(
+        "textDocument/formatting",
+        json!({ "textDocument": { "uri": uri(&moteur_path) }, "options": { "tabSize": 4, "insertSpaces": true } }),
+    );
+    let edits = fmt["result"].as_array().unwrap_or_else(|| panic!("{fmt}"));
+    assert_eq!(edits.len(), 1, "{fmt}");
+    assert_eq!(edits[0]["newText"], moteur, "{fmt}");
+
     c.request("shutdown", json!(null));
     c.notify("exit", json!(null));
 }
