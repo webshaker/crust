@@ -249,6 +249,30 @@ Ce n'est pas le cas des autres macros qui lisent des fichiers (`sqlx::query_file
 
 ## 4. Procédure recommandée pour l'agent
 
+### 4.1. Automatique : `cargo crust migrate`
+
+```sh
+git switch -c crust-migration
+cargo crust migrate --dry-run     # liste des modules convertibles et des classes
+cargo crust migrate               # conversion, vérifiée par cargo check
+cargo crust test && git commit -am "Migration vers Crust"
+```
+
+Pour chaque module `.rs` monté par un simple `mod x;` :
+
+- `struct` + `impl` deviennent des `class`, uniquement dans les cas sans ambiguïté. Ailleurs, les `impl` restent tels quels dans le `.rsc` : c'est du Rust valide;
+- `x.rs` devient `x.rsc`, et son `mod x;` est retiré du parent;
+- un module qui n'était pas `pub` est ajouté à `private` (`Cargo.toml`);
+- un fichier de module qui ne faisait plus que déclarer des sous-modules (`robot.rs`) est supprimé.
+
+`cargo check --all-targets` doit passer avant et après ; sinon, **tout est restauré**. Par défaut, seuls les fichiers qui contiennent au moins une classe convertible sont migrés. Sinon, nommer les fichiers : `cargo crust migrate src/outils.rs`.
+
+Ne sont pas touchés : les racines (`main.rs`, `lib.rs`), les `mod.rs`, `src/bin`, les modules montés par `#[path]`, ceux déclarés avec un attribut (`#[cfg(test)] mod tests;`) ou dans un module inline.
+
+Ensuite, terminer à la main ce qui reste (voir 4.2), en relisant le diff.
+
+### 4.2. Manuelle
+
 1. Créer une branche : `git switch -c crust-migration`.
 2. Faire l'installation (section 2). `cargo build && cargo test` doivent donner exactement le même résultat qu'avant. Committer.
 3. Relever la référence :

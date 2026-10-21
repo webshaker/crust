@@ -12,6 +12,7 @@ pub mod diag;
 mod emit;
 pub mod fmt;
 pub mod lexer;
+pub mod migrate;
 pub mod names;
 mod parser;
 pub mod resolve;
@@ -171,4 +172,41 @@ pub fn leading_cfgs(src: &str) -> Vec<String> {
         p = next;
     }
     out
+}
+
+/// Déclaration `mod nom;` d'un fichier (pour `cargo crust migrate`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileModInfo {
+    pub name: String,
+    /// De ses attributs au `;`.
+    pub span: Span,
+    /// `pub`, `pub(crate)`… ou `None` (privé).
+    pub vis: Option<String>,
+    /// Attributs (hors commentaires de doc).
+    pub attrs: Vec<String>,
+    /// Modules inline englobants.
+    pub inline: Vec<String>,
+}
+
+/// Les `mod nom;` d'un fichier Rust.
+pub fn file_mods(src: &str) -> Vec<FileModInfo> {
+    let t = toks::Toks::new(src);
+    parser::parse(&t, false)
+        .into_iter()
+        .filter_map(|item| match item {
+            parser::Item::FileMod(m) => Some(FileModInfo {
+                name: t.text(m.name).to_string(),
+                span: t.range_span(m.range),
+                vis: m.vis.map(|v| emit::oneline_text(&t, v)),
+                attrs: m
+                    .attrs
+                    .iter()
+                    .filter(|a| a.kind != parser::AttrKind::Doc)
+                    .map(|a| emit::oneline_text(&t, a.range))
+                    .collect(),
+                inline: m.inline,
+            }),
+            _ => None,
+        })
+        .collect()
 }

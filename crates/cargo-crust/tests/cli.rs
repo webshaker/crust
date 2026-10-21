@@ -345,3 +345,58 @@ fn fmt_formate_les_rsc() {
         std::fs::read_to_string(dir.join("expected.stdout")).unwrap()
     );
 }
+
+/// `cargo crust migrate` sur un projet Rust ordinaire : mêmes sorties, tests au vert.
+#[test]
+fn migrate_convertit_un_projet_rust() {
+    let dir = fixture("p6_avant_migration", "migrate");
+    let expected = std::fs::read_to_string(dir.join("expected.stdout")).unwrap();
+    assert_eq!(
+        text(&cargo_plain(&dir, &["run", "-q"]).stdout),
+        expected,
+        "avant migration"
+    );
+
+    let dry = crust(&dir, &["migrate", "--dry-run"]);
+    assert!(text(&dry.stdout).contains("servo.rs"), "{}", text(&dry.stdout));
+    assert!(dir.join("src/robot/servo.rs").exists(), "--dry-run ne modifie rien");
+
+    let out = crust(&dir, &["migrate"]);
+    assert!(out.status.success(), "{}{}", text(&out.stdout), text(&out.stderr));
+    for f in ["servo", "capteur", "interne"] {
+        assert!(
+            dir.join(format!("src/robot/{f}.rsc")).exists() && !dir.join(format!("src/robot/{f}.rs")).exists(),
+            "{f}"
+        );
+    }
+    assert!(dir.join("src/outils.rs").exists(), "sans struct : non converti");
+    let servo = std::fs::read_to_string(dir.join("src/robot/servo.rsc")).unwrap();
+    assert!(
+        servo.contains("pub class Servo {") && servo.contains("impl fmt::Display {"),
+        "{servo}"
+    );
+    let capteur = std::fs::read_to_string(dir.join("src/robot/capteur.rsc")).unwrap();
+    assert!(
+        capteur.contains("pub class Capteur<T>") && capteur.contains("impl<T: Copy> Capteur<T>"),
+        "{capteur}"
+    );
+    // robot.rs ne déclarait que des sous-modules : supprimé, avec son `mod robot;`.
+    assert!(!dir.join("src/robot.rs").exists());
+    let main = std::fs::read_to_string(dir.join("src/main.rs")).unwrap();
+    assert!(!main.contains("mod robot;") && main.contains("mod outils;"), "{main}");
+    let toml = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    assert!(
+        toml.contains("\"robot/interne\"") && toml.contains("\"robot\""),
+        "{toml}"
+    );
+
+    let run = crust(&dir, &["run", "-q"]);
+    assert_eq!(text(&run.stdout), expected, "{}", text(&run.stderr));
+    let test = crust(&dir, &["test", "-q"]);
+    assert!(
+        test.status.success() && text(&test.stdout).contains("2 passed"),
+        "{}{}",
+        text(&test.stdout),
+        text(&test.stderr)
+    );
+}

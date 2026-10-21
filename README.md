@@ -40,6 +40,7 @@ Exemple complet : `exemples/robot/` (l'ouvrir dans sa propre fenêtre VS Code).
 | `cargo crust new`, `cargo crust init` | créer un projet / installer Crust dans un projet |
 | `cargo crust expand <fichier.rsc>` | voir le Rust généré |
 | `cargo crust explain CR0002` | expliquer une erreur Crust |
+| `cargo crust migrate [--dry-run]` | convertir un projet Rust existant (struct + impl → class, `.rs` → `.rsc`) |
 | `cargo crust fmt [--check]` | formater les `.rsc` (et les `.rs` via `cargo fmt`) |
 | `cargo crust eject` | revenir à du Rust standard (retire Crust du paquet) |
 

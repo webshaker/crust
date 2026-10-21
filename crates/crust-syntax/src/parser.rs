@@ -212,6 +212,16 @@ struct Parser<'t, 'a> {
     t: &'t Toks<'a>,
 }
 
+/// Paramètres génériques `<...>` commençant en `p` (pour `migrate`).
+pub(crate) fn generics_at(t: &Toks, p: usize, end: usize) -> Option<(Generics, usize)> {
+    Parser { t }.generics(p, end).ok()
+}
+
+/// Saute un item Rust ordinaire commençant en `p` (pour `migrate`).
+pub(crate) fn skip_item_at(t: &Toks, p: usize, end: usize) -> usize {
+    Parser { t }.skip_item(p, end)
+}
+
 impl Parser<'_, '_> {
     fn module_items(&self, mut p: usize, end: usize, inline: &[String], items: &mut Vec<Item>) {
         let t = self.t;
