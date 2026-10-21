@@ -1396,6 +1396,17 @@ Ne pas considérer une phase comme réussie si les erreurs pointent vers du Rust
   - `p4_errors` : CR0009, CR0010, CR0011 et CR0015, sans erreur en cascade.
 
   Reste non testé : T15 (`cargo package`), qui nécessite que `crust-build` soit publié sur crates.io.
+- **P3 : terminé** (2026-10-21). `cargo crust build|check|run|test|clippy|doc|bench`, `new`, `init`, `explain`, `expand`. Fonctionnement :
+  - cargo est lancé avec `--message-format=json`; chaque span d'un fichier généré est ramené dans le `.rsc`, avec une source map recalculée en retranspilant le fichier (`crust_build::transpile_rsc`). Si le fichier généré ne correspond plus, seul le chemin est corrigé, ce qui suffit grâce aux lignes préservées;
+  - le message est réaffiché au format rustc avec annotate-snippets 0.11;
+  - les messages qui ne concernent aucun fichier généré sont transmis tels quels, avec le texte de rustc;
+  - les suggestions qui visent du code synthétisé sont retirées;
+  - la sortie du programme (`run`, `test`) passe en flux continu, invites sans fin de ligne comprises;
+  - `--message-format=json` de l'utilisateur renvoie le JSON remappé (utilisable par rust-analyzer en P4).
+
+  Tests `crates/cargo-crust/tests/cli.rs` : erreurs (type, champ dans la struct générée) au bon endroit et sans chemin généré visible, JSON remappé, `run`/`test`, `new` + `init`, `explain`. Écarts de rendu connus, liés à annotate-snippets 0.11 :
+  - en couleur, le soulignement principal d'un warning est rouge au lieu de jaune;
+  - une suggestion est affichée en ligne (`help: … : \`_x\``) et non sous forme de diff.
 - **Non pris en charge pour l'instant** :
   - `src/bin/*.rsc`;
   - `module-visibility` (12.1.4) : les modules générés sont toujours `pub`;

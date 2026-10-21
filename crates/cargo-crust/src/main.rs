@@ -1,6 +1,10 @@
-//! `cargo crust` : sous-commande cargo des projets Crust.
-//!
-//! Phase P1 : `cargo crust expand <fichier.rsc>` affiche le Rust généré.
+//! `cargo crust` : sous-commande cargo des projets Crust (section 17.4).
+
+mod cargo;
+mod explain;
+mod init;
+mod remap;
+mod render;
 
 use std::io::Write;
 use std::path::Path;
@@ -9,11 +13,16 @@ use std::process::{Command, ExitCode, Stdio};
 use crust_syntax::{Diagnostic, FsResolver, Layout, LineIndex, NoResolver, Resolver, transpile};
 
 const USAGE: &str = "\
-usage : cargo crust expand <fichier.rsc> [--lines] [--map]
+usage : cargo crust <commande> [arguments]
 
-  expand    affiche le Rust standard équivalent au fichier .rsc
-  --lines   disposition préservant les lignes (celle utilisée pour compiler)
-  --map     affiche aussi la source map (avec --lines)";
+  build, check, run, test, clippy, doc, bench
+                 comme cargo, avec les erreurs ramenées dans les fichiers .rsc
+  new <chemin>   nouveau projet Crust (cargo new + init)
+  init [chemin]  installe Crust dans un paquet existant
+  expand <fichier.rsc> [--lines] [--map]
+                 affiche le Rust standard équivalent
+  explain <CRxxxx>
+                 explique une erreur Crust";
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,8 +30,24 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|a| a == "crust") {
         args.remove(0);
     }
+    let rest = args.get(1..).unwrap_or_default();
     match args.first().map(String::as_str) {
-        Some("expand") => expand(&args[1..]),
+        Some(sub @ ("build" | "b" | "check" | "c" | "run" | "r" | "test" | "t" | "clippy" | "doc" | "bench")) => {
+            cargo::run(sub, rest)
+        }
+        Some("expand") => expand(rest),
+        Some("explain") => match rest.first().and_then(|c| explain::text(c)) {
+            Some(text) => {
+                println!("{text}");
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("code inconnu ; codes Crust : CR0001 à CR0015");
+                ExitCode::from(2)
+            }
+        },
+        Some("init") => init::init(rest),
+        Some("new") => init::new(rest),
         Some("--version" | "-V") => {
             println!("cargo-crust {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS

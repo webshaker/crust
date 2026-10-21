@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use crust_syntax::{Layout, Options, SourceInfo, transpile_with};
 
 use tree::{BuildResolver, DirKind};
-pub use tree::{Project, Target};
+pub use tree::{Project, RscFile, Target};
 
 pub struct Config {
     /// Répertoire du paquet (celui de `Cargo.toml`).
@@ -49,17 +49,48 @@ impl Config {
 
 /// `[lib] name = "..."` dans `Cargo.toml`, s'il est précisé.
 fn lib_name(manifest_dir: &Path) -> Option<String> {
+    toml_name(manifest_dir, "[lib]")
+}
+
+/// `name = "..."` de la section `section` de `Cargo.toml`, tirets remplacés par `_`.
+fn toml_name(manifest_dir: &Path, section: &str) -> Option<String> {
     let toml = std::fs::read_to_string(manifest_dir.join("Cargo.toml")).ok()?;
-    let mut in_lib = false;
+    let mut in_section = false;
     for line in toml.lines().map(str::trim) {
         if line.starts_with('[') {
-            in_lib = line == "[lib]";
-        } else if in_lib && let Some(value) = line.strip_prefix("name") {
+            in_section = line == section;
+        } else if in_section && let Some(value) = line.strip_prefix("name") {
             let value = value.trim_start().strip_prefix('=')?.trim().trim_matches('"');
             return Some(value.replace('-', "_"));
         }
     }
     None
+}
+
+/// Nom de la crate lib du paquet (hors build script, sans `CARGO_PKG_NAME`).
+pub fn crate_lib_name(manifest_dir: &Path) -> String {
+    lib_name(manifest_dir)
+        .or_else(|| toml_name(manifest_dir, "[package]"))
+        .unwrap_or_default()
+}
+
+/// Traduction d'un `.rsc` du projet, exactement comme pour la compilation :
+/// sert aussi à recalculer la source map (`cargo crust`, `crust-lsp`).
+pub fn transpile_rsc(project: &Project, r: &tree::RscFile) -> Result<crust_syntax::Output, String> {
+    let text = std::fs::read_to_string(&r.abs).map_err(|e| format!("{} : {e}", r.abs.display()))?;
+    let resolver = BuildResolver {
+        project,
+        current: r.abs.clone(),
+        target: r.target(project.owner),
+    };
+    let options = Options {
+        layout: Layout::Lines,
+        source: Some(SourceInfo {
+            file: r.abs.clone(),
+            crate_root: r.root.is_some(),
+        }),
+    };
+    Ok(transpile_with(&text, &options, &resolver))
 }
 
 #[derive(Debug, Default)]
@@ -117,20 +148,7 @@ pub fn generate(cfg: &Config) -> Result<Report, String> {
     };
 
     for r in &project.rsc {
-        let text = std::fs::read_to_string(&r.abs).map_err(|e| format!("{} : {e}", r.abs.display()))?;
-        let resolver = BuildResolver {
-            project: &project,
-            current: r.abs.clone(),
-            target: r.target(project.owner),
-        };
-        let options = Options {
-            layout: Layout::Lines,
-            source: Some(SourceInfo {
-                file: r.abs.clone(),
-                crate_root: r.root.is_some(),
-            }),
-        };
-        let out = transpile_with(&text, &options, &resolver);
+        let out = transpile_rsc(&project, r)?;
         let mut code = out.code;
         if !code.ends_with('\n') {
             code.push('\n');

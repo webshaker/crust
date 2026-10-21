@@ -11,8 +11,9 @@ Destinataire : un agent (ou un développeur) qui travaille sur un projet Rust ex
 | `cargo build`, `cargo run`, `cargo test`, `cargo clippy` sur un projet `.rsc` | ✅ fonctionne |
 | `class`, `over`, `impl Trait` dans une classe, generics, `import` | ✅ |
 | Mélange `.rs` / `.rsc` dans une même crate, crate lib + bin | ✅ |
-| Erreurs du compilateur : bonne ligne et bonne colonne du `.rsc` | ✅, mais le chemin affiché est celui de la copie générée dans `target/` (voir 6) |
-| `cargo crust build/check` avec les chemins des `.rsc` | ❌ pas encore (phase P3) |
+| `cargo crust build/check/run/test/clippy` : erreurs et warnings affichés dans les `.rsc`, au format rustc | ✅ (phase P3) |
+| `cargo build` simple : bonne ligne et bonne colonne, mais chemin de la copie générée dans `target/` | ✅ (voir 6) |
+| `cargo crust new`, `cargo crust init` (installation automatique), `cargo crust explain CRxxxx` | ✅ |
 | **rust-analyzer / VS Code** sur les `.rsc` | ❌ **pas encore (phase P4)** : pas de complétion ni de navigation dans les `.rsc`. Les `.rs` qui utilisent des types définis en `.rsc` peuvent afficher de fausses erreurs dans l'éditeur. `cargo build` reste la référence. |
 | `cargo fmt` sur les `.rsc` | ❌ pas encore : rustfmt ignore les `.rsc` |
 | `src/bin/*.rsc`, `.rsc` dans `tests/`, `examples/`, `benches/` | ❌ : ces fichiers restent en `.rs` |
@@ -28,7 +29,9 @@ Destinataire : un agent (ou un développeur) qui travaille sur un projet Rust ex
 
 ## 2. Installer Crust dans le projet
 
-Chemin local de Crust : `/home/rtx/crust`.
+Chemin local de Crust : `/home/rtx/crust`. La commande `cargo crust` est installée sur cette machine. Si elle manque : `cargo install --path /home/rtx/crust/crates/cargo-crust`.
+
+**Le plus simple** : à la racine du paquet, lancer `cargo crust init`. La commande fait les étapes 2.1 à 2.3 ci-dessous (option A) et ne fait rien si Crust est déjà installé. Les sections suivantes détaillent ce qu'elle fait.
 
 ### 2.1. `Cargo.toml` du paquet
 
@@ -72,13 +75,17 @@ include!(concat!(env!("OUT_DIR"), "/crust/root_main.rs"));
 
 Pour une crate lib + bin : `src/lib.rs` inclut `root_lib.rs`, `src/main.rs` inclut `root_main.rs`. Les modules `.rsc` appartiennent à la lib.
 
-### 2.4. Outil d'inspection (recommandé)
+### 2.4. Commandes utiles
 
 ```sh
-cargo install --path /home/rtx/crust/crates/cargo-crust
+cargo crust check            # comme cargo check, erreurs affichées dans les .rsc
+cargo crust build | run | test | clippy   # idem ; tous les arguments de cargo sont acceptés
 cargo crust expand src/robot/Moteur.rsc          # Rust équivalent, formaté
 cargo crust expand --lines src/robot/Moteur.rsc  # version réellement compilée
+cargo crust explain CR0002                       # explication d'une erreur Crust
 ```
+
+**Utiliser `cargo crust check` / `cargo crust test` plutôt que `cargo check` / `cargo test`** pendant la migration : les messages pointent directement vers le `.rsc` à corriger. `--message-format=json` est accepté et renvoie le JSON de cargo, avec les positions déjà converties vers les `.rsc`.
 
 ### 2.5. Vérification de l'installation
 
@@ -222,7 +229,7 @@ import { lire } from "./capteur.rs";                // fonctionne aussi vers un 
    1. renommer ou créer le `.rsc`, convertir `struct` + `impl` en `class`;
    2. retirer le `mod x;` et le `mod.rs` devenus inutiles;
    3. adapter les chemins si le nom de module change (par exemple `moteur.rs` → `Moteur.rsc` garde `crate::…::moteur`, mais `motor_ctrl.rs` → `MoteurCtrl.rsc` donne `moteur_ctrl`);
-   4. `cargo build && cargo test && cargo clippy --all-targets`;
+   4. `cargo crust check && cargo crust test && cargo crust clippy --all-targets`;
    5. committer, un commit par module.
 5. **Ne pas** profiter de la migration pour changer la logique, renommer l'API publique ou reformater le code : ce sont des diffs à faire séparément.
 6. À la fin : mêmes tests au vert, mêmes warnings clippy, même API publique. `cargo crust expand` sur quelques fichiers permet de vérifier que le Rust généré correspond à l'original.
@@ -249,7 +256,19 @@ mon_projet/
 
 ## 6. Lire les erreurs du compilateur
 
-En attendant la phase P3, les erreurs affichent le chemin de la copie générée :
+Avec `cargo crust check` (ou `build`, `test`, `clippy`), les erreurs s'affichent comme d'habitude, directement dans le `.rsc` :
+
+```text
+error[E0308]: mismatched types
+  --> src/robot/Moteur.rsc:11:24
+   |
+11 |         self.vitesse = "abc";
+   |         ------------   ^^^^^ expected `u32`, found `&str`
+```
+
+Une suggestion de rustc qui porterait sur du code généré (par exemple la `struct`) n'est pas affichée, car elle ne s'appliquerait pas au `.rsc`.
+
+Avec `cargo build` simple, les erreurs affichent le chemin de la copie générée :
 
 ```text
 error[E0308]: mismatched types
@@ -259,7 +278,7 @@ error[E0308]: mismatched types
 Pour trouver le fichier à corriger, **retirer le préfixe `…/out/crust/`** : c'est `src/robot/Moteur.rsc`, ligne 11, colonne 24.
 
 - **Code écrit à la main** (corps de méthodes, signatures, items Rust) : ligne et colonne sont exactes.
-- **Erreur sur un champ ou un `#[derive]`** : la position peut tomber sur la ligne de l'accolade fermante de la classe, car la `struct` générée y est écrite. Le champ concerné est nommé dans le message.
+- **Erreur sur un champ ou un `#[derive]`** : avec `cargo build`, la position peut tomber sur la ligne de l'accolade fermante de la classe, car la `struct` générée y est écrite. `cargo crust` la ramène sur le champ.
 - **Erreurs propres à Crust** : elles apparaissent sous la forme `error: [CR0002] …` à la bonne ligne, avec une ligne `= help:` qui donne la correction. Liste complète dans la spec, section 19.2.
   - Les plus courantes : CR0001 (syntaxe, souvent une virgule manquante après un champ), CR0002 (champ en collision avec `over`), CR0005 (élément interdit dans une classe).
 
