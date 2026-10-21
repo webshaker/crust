@@ -1419,6 +1419,14 @@ Ne pas considérer une phase comme réussie si les erreurs pointent vers du Rust
     - diagnostic natif à la bonne position;
     - renommage d'un champ (3 + 2 modifications, sans doublon);
     - coloration de `class`.
+- **P5 : terminé** (2026-10-21). Extension `editors/vscode` (JavaScript sans compilation, `crust-0.1.0.vsix`, installée sur cette machine). Elle fournit :
+  - l'association `.rsc` → langage `rust` (pas de `files.associations` global);
+  - une grammaire d'injection pour `class`, `over`, `import` et `from`, vérifiée avec vscode-textmate et la grammaire Rust de VS Code : rien n'est coloré à tort dans les chaînes, les commentaires ou les identifiants;
+  - dans un projet Crust (`crust-build` en dépendance de build), la proposition, avec l'accord de l'utilisateur, de régler `rust-analyzer.server.path` sur `crust-lsp` au niveau du workspace;
+  - la commande « afficher le Rust généré », en document en lecture seule actualisé à l'enregistrement;
+  - un fournisseur de configuration de débogage `lldb` qui ajoute le `sourceMap` `<OUT_DIR>/crust/src` → `src`, grâce au fichier `OUT_DIR/crust/source_dir` écrit par `crust-build`.
+
+  Exemple prêt à ouvrir : `exemples/robot/`.
 - **Non pris en charge pour l'instant** :
   - `src/bin/*.rsc`;
   - `module-visibility` (12.1.4) : les modules générés sont toujours `pub`;

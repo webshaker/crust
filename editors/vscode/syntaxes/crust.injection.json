@@ -1,0 +1,28 @@
+{
+  "scopeName": "crust.injection",
+  "injectionSelector": "L:source.rust -comment -string",
+  "patterns": [
+    {
+      "comment": "class Nom (en tête d'item)",
+      "match": "(?<=^|[\\s;}\\]])(class)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.class.crust storage.type.struct.rust" },
+        "2": { "name": "entity.name.type.class.crust entity.name.type.struct.rust" }
+      }
+    },
+    {
+      "comment": "over Type, dans l'en-tête d'une classe",
+      "match": "(?<=[>\\w]\\s)(over)(?=\\s+(?:pub\\b|[A-Za-z_:&(\\[]))",
+      "captures": { "1": { "name": "keyword.other.over.crust storage.modifier.rust" } }
+    },
+    {
+      "comment": "import ... from \"...\"",
+      "match": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(import)\\b(?=.*\\bfrom\\s+\")",
+      "captures": { "1": { "name": "keyword.other.import.crust keyword.other.rust" } }
+    },
+    {
+      "match": "(?<=[}\\w*]\\s)(from)(?=\\s+\")",
+      "captures": { "1": { "name": "keyword.other.from.crust keyword.other.rust" } }
+    }
+  ]
+}

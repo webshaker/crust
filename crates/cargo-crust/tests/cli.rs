@@ -177,9 +177,12 @@ fn run_et_test_transmettent_la_sortie() {
 
 #[test]
 fn new_et_init() {
-    let dir = scratch("nouveau");
-    let parent = dir.parent().unwrap();
-    let out = crust(parent, &["new", "--vcs", "none", "nouveau"]);
+    // Hors du dépôt : dans un workspace, `cargo new` ajoute le projet à ses `members`.
+    let parent = std::env::temp_dir().join(format!("crust-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::create_dir_all(&parent).unwrap();
+    let dir = parent.join("nouveau");
+    let out = crust(&parent, &["new", "--vcs", "none", "nouveau"]);
     assert!(out.status.success(), "{}{}", text(&out.stdout), text(&out.stderr));
     std::fs::write(dir.join("src/Salut.rsc"), "pub class Salut { pub nom: String, }\n").unwrap();
     std::fs::write(
@@ -194,6 +197,11 @@ fn new_et_init() {
     // `init` est idempotent.
     let out = crust(&dir, &["init"]);
     assert!(text(&out.stdout).contains("déjà installé"), "{}", text(&out.stdout));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("src/main.rs")).unwrap(),
+        "include!(concat!(env!(\"OUT_DIR\"), \"/crust/root_main.rs\"));\n"
+    );
+    let _ = std::fs::remove_dir_all(&parent);
 }
 
 #[test]

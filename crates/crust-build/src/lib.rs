@@ -165,6 +165,9 @@ pub fn generate(cfg: &Config) -> Result<Report, String> {
     for (path, code) in decl_files(&project, &gen_dir) {
         write_if_changed(&path, &code, &mut report)?;
     }
+    // Pour les outils (débogueur, cargo crust) : répertoire source de ce paquet.
+    let src_dir = format!("{}\n", project.src.display());
+    write_if_changed(&gen_dir.join("source_dir"), &src_dir, &mut report)?;
     Ok(report)
 }
 

@@ -1,0 +1,47 @@
+{
+  "name": "crust",
+  "displayName": "Crust",
+  "description": "Fichiers .rsc (Rust avec classes) : rust-analyzer via crust-lsp, coloration, Rust généré.",
+  "version": "0.1.0",
+  "publisher": "crust-local",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "file:///home/rtx/crust" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "extensionDependencies": ["rust-lang.rust-analyzer"],
+  "activationEvents": ["workspaceContains:**/*.rsc", "onLanguage:rust"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [{ "id": "rust", "extensions": [".rsc"] }],
+    "grammars": [
+      {
+        "scopeName": "crust.injection",
+        "path": "./syntaxes/crust.injection.json",
+        "injectTo": ["source.rust"]
+      }
+    ],
+    "commands": [
+      { "command": "crust.expand", "title": "Crust : afficher le Rust généré", "icon": "$(file-code)" },
+      { "command": "crust.setup", "title": "Crust : utiliser crust-lsp dans ce workspace" }
+    ],
+    "menus": {
+      "editor/title": [{ "command": "crust.expand", "when": "resourceExtname == .rsc", "group": "navigation" }],
+      "commandPalette": [{ "command": "crust.expand", "when": "resourceExtname == .rsc" }]
+    },
+    "configuration": {
+      "title": "Crust",
+      "properties": {
+        "crust.lspPath": {
+          "type": "string",
+          "default": "",
+          "description": "Chemin de crust-lsp (vide : ~/.cargo/bin/crust-lsp, sinon le PATH)."
+        },
+        "crust.cargoCrustPath": {
+          "type": "string",
+          "default": "",
+          "description": "Chemin de cargo-crust pour « afficher le Rust généré » (vide : ~/.cargo/bin/cargo-crust, sinon le PATH)."
+        }
+      }
+    }
+  }
+}

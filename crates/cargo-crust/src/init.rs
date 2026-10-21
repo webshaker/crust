@@ -29,7 +29,7 @@ pub fn init_package(dir: &Path) -> Result<Vec<String>, String> {
                 let at = i + "[build-dependencies]".len();
                 format!("{}\n{dep}{}", &toml[..at], &toml[at..])
             }
-            None => format!("{}\n[build-dependencies]\n{dep}\n", toml.trim_end()),
+            None => format!("{}\n\n[build-dependencies]\n{dep}\n", toml.trim_end()),
         };
         std::fs::write(&manifest, new).map_err(|e| e.to_string())?;
         done.push(format!("Cargo.toml : ajout de `{dep}`"));
@@ -67,12 +67,12 @@ pub fn init_package(dir: &Path) -> Result<Vec<String>, String> {
         };
         if !text.contains(&format!("/crust/{root}")) {
             let line = ROOT_LINE.replace("{root}", root);
-            let sep = if text.ends_with('\n') || text.is_empty() {
-                ""
+            let new = if text.trim().is_empty() {
+                format!("{line}\n")
             } else {
-                "\n"
+                format!("{}\n\n{line}\n", text.trim_end())
             };
-            std::fs::write(&path, format!("{text}{sep}\n{line}\n")).map_err(|e| e.to_string())?;
+            std::fs::write(&path, new).map_err(|e| e.to_string())?;
             done.push(format!("{file} : ajout de la ligne d'inclusion des modules Crust"));
         }
     }

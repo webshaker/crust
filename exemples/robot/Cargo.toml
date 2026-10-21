@@ -1,0 +1,10 @@
+[package]
+name = "robot"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+crust-build = { path = "../../crates/crust-build" }
+
+# Projet autonome (pas membre du workspace Crust).
+[workspace]

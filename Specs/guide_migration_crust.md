@@ -14,12 +14,12 @@ Destinataire : un agent (ou un développeur) qui travaille sur un projet Rust ex
 | `cargo crust build/check/run/test/clippy` : erreurs et warnings affichés dans les `.rsc`, au format rustc | ✅ (phase P3) |
 | `cargo build` simple : bonne ligne et bonne colonne, mais chemin de la copie générée dans `target/` | ✅ (voir 6) |
 | `cargo crust new`, `cargo crust init` (installation automatique), `cargo crust explain CRxxxx` | ✅ |
-| **rust-analyzer / VS Code** sur les `.rsc` | ❌ **pas encore (phase P4)** : pas de complétion ni de navigation dans les `.rsc`. Les `.rs` qui utilisent des types définis en `.rsc` peuvent afficher de fausses erreurs dans l'éditeur. `cargo build` reste la référence. |
+| **VS Code** (rust-analyzer via `crust-lsp` + extension « Crust ») : complétion, survol, définition, références, renommage, diagnostics, coloration dans les `.rsc` | ✅ (phases P4–P5), après activation dans le workspace (voir 2.5) |
 | `cargo fmt` sur les `.rsc` | ❌ pas encore : rustfmt ignore les `.rsc` |
 | `src/bin/*.rsc`, `.rsc` dans `tests/`, `examples/`, `benches/` | ❌ : ces fichiers restent en `.rs` |
 | Publication sur crates.io | ❌ : `crust-build` n'est pas publié, dépendance par chemin local uniquement |
 
-**Conséquence** : la migration est possible et le binaire produit est identique. En revanche, **le confort dans l'éditeur baisse jusqu'à la phase P4**. Faire la migration :
+**Conséquence** : la migration est possible, le binaire produit est identique, et l'éditeur fonctionne sur les `.rsc`. Crust reste jeune. Faire la migration :
 
 - **sur une branche git dédiée**, jamais directement sur la branche principale;
 - **progressivement**, module par module, en compilant et en testant après chaque étape;
@@ -87,7 +87,15 @@ cargo crust explain CR0002                       # explication d'une erreur Crus
 
 **Utiliser `cargo crust check` / `cargo crust test` plutôt que `cargo check` / `cargo test`** pendant la migration : les messages pointent directement vers le `.rsc` à corriger. `--message-format=json` est accepté et renvoie le JSON de cargo, avec les positions déjà converties vers les `.rsc`.
 
-### 2.5. Vérification de l'installation
+### 2.5. VS Code
+
+1. L'extension « Crust » doit être installée (`code --install-extension /home/rtx/crust/editors/vscode/crust-0.1.0.vsix`), ainsi que `crust-lsp` (`cargo install --path /home/rtx/crust/crates/crust-lsp`).
+2. À l'ouverture d'un projet Crust, l'extension propose de faire passer rust-analyzer par `crust-lsp` : répondre « Activer ». Sinon, utiliser la commande « Crust : utiliser crust-lsp dans ce workspace ». Elle écrit `"rust-analyzer.server.path": "…/crust-lsp"` dans `.vscode/settings.json` du workspace.
+3. Bouton « afficher le Rust généré » dans la barre d'un `.rsc`.
+
+Un agent sans éditeur n'a pas besoin de cette étape.
+
+### 2.6. Vérification de l'installation
 
 Avant de convertir le moindre fichier, lancer `cargo build && cargo test`. Ça doit passer exactement comme avant, avec les mêmes warnings.
 
