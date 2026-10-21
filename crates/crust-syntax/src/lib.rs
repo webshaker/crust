@@ -1,0 +1,113 @@
+//! Crust : transpilation des fichiers `.rsc` vers du Rust standard.
+//!
+//! ```
+//! use crust_syntax::{transpile, Layout, NoResolver};
+//!
+//! let out = transpile("pub class A { pub x: u32, }", Layout::Lines, &NoResolver);
+//! assert!(out.diagnostics.is_empty());
+//! assert!(out.code.contains("pub struct A { pub x: u32, }"));
+//! ```
+
+pub mod diag;
+mod emit;
+pub mod lexer;
+pub mod names;
+mod parser;
+pub mod resolve;
+pub mod sourcemap;
+mod toks;
+
+pub use diag::{Code, Diagnostic, Label};
+pub use resolve::{FsResolver, NoResolver, ResolveError, Resolved, Resolver};
+pub use sourcemap::{LineCol, LineIndex, Mapped, Segment, SegmentKind, SourceMap};
+
+/// Plage d'octets dans un texte, fin exclue.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize) -> Self {
+        Span {
+            start,
+            end: end.max(start),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// Disposition préservant les lignes : pour la compilation et l'éditeur.
+    Lines,
+    /// `struct` puis `impl`, lisible : pour `cargo crust expand` et `eject`.
+    Natural,
+}
+
+#[derive(Clone, Debug)]
+pub struct Output {
+    pub code: String,
+    /// Vide en disposition [`Layout::Natural`].
+    pub map: SourceMap,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Traduit un fichier `.rsc` en Rust standard.
+///
+/// Un fichier sans construction Crust est rendu à l'identique (garantie C1).
+pub fn transpile(src: &str, layout: Layout, resolver: &dyn Resolver) -> Output {
+    transpile_impl(src, layout, resolver, true)
+}
+
+/// [`transpile`] sans le raccourci sur les fichiers sans mot-clé Crust :
+/// utilisé par les tests de compatibilité pour exercer le parseur sur tout le corpus.
+#[doc(hidden)]
+pub fn transpile_without_shortcut(src: &str, layout: Layout, resolver: &dyn Resolver) -> Output {
+    transpile_impl(src, layout, resolver, false)
+}
+
+fn transpile_impl(src: &str, layout: Layout, resolver: &dyn Resolver, shortcut: bool) -> Output {
+    let identity = || Output {
+        code: src.to_string(),
+        map: SourceMap {
+            segments: vec![Segment {
+                gen_start: 0,
+                gen_len: src.len(),
+                src_start: 0,
+                src_len: src.len(),
+                kind: SegmentKind::Copied,
+                primary: false,
+            }],
+        },
+        diagnostics: Vec::new(),
+    };
+    // Raccourci : pas de mot-clé Crust, rien à faire.
+    if shortcut && !src.contains("class") && !src.contains("import") {
+        return identity();
+    }
+    let t = toks::Toks::new(src);
+    let items = parser::parse(&t);
+    if items.is_empty() {
+        return identity();
+    }
+    let (code, mut map, diagnostics) = emit::emit(&t, &items, layout, resolver);
+    if layout == Layout::Natural {
+        map = SourceMap::default();
+    }
+    Output { code, map, diagnostics }
+}
+
+/// Noms définis au premier niveau d'un fichier `.rsc` ou `.rs`, ou `None` si on
+/// ne peut pas le déterminer sans expansion de macros.
+pub fn top_level_names(src: &str) -> Option<Vec<String>> {
+    emit::top_level_names(&toks::Toks::new(src))
+}

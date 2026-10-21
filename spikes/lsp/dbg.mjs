@@ -1,0 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { startServer, initialize } from './lsp.mjs';
+const root = '/home/rtx/crust/spikes/ctl', f = `${root}/src/main.rs`;
+const srv = startServer();
+await initialize(srv, root);
+let text = readFileSync(f, 'utf8');
+srv.notify('textDocument/didOpen', { textDocument: { uri: `file://${f}`, languageId: 'rust', version: 1, text } });
+text = text.replace('s.turbo();', 's.turb(); let z = M { };');
+srv.notify('textDocument/didChange', { textDocument: { uri: `file://${f}`, version: 2 }, contentChanges: [{ text }] });
+await new Promise(r => setTimeout(r, 6000));
+for (const n of srv.notifications) console.log(n.method, JSON.stringify(n.params).slice(0, 300));
+const pull = await srv.request('textDocument/diagnostic', { textDocument: { uri: `file://${f}` } }).catch(e => e.message);
+console.log('PULL', JSON.stringify(pull).slice(0, 600));
+srv.proc.kill();

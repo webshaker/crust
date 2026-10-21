@@ -1,0 +1,3 @@
+CR0006 34..48 impossible de résoudre `./Moteur.rsc` dans ce contexte
+CR0006 76..90 impossible de résoudre `@/robot/Truc` dans ce contexte
+CR0006 110..119 impossible de résoudre `../x.rs` dans ce contexte

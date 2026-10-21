@@ -1,0 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { startServer, initialize } from './lsp.mjs';
+const root = process.argv[2], f = process.argv[3];
+const srv = startServer();
+await initialize(srv, root);
+let text = readFileSync(f, 'utf8');
+srv.notify('textDocument/didOpen', { textDocument: { uri: `file://${f}`, languageId: 'rust', version: 1, text } });
+text = text.replace(process.argv[4], process.argv[5]);
+srv.notify('textDocument/didChange', { textDocument: { uri: `file://${f}`, version: 2 }, contentChanges: [{ text }] });
+const diag = await srv.waitFor(m => m.method === 'textDocument/publishDiagnostics' && m.params.uri === `file://${f}` && m.params.diagnostics.some(d => d.source === 'rust-analyzer'), 15000).catch(() => null);
+console.log(f.split('/').slice(-3).join('/'), '->', diag?.params.diagnostics.map(d => `[${d.source}] ${d.range.start.line + 1}:${d.range.start.character + 1} ${d.code} ${d.message.split('\n')[0]}`));
+srv.proc.kill();

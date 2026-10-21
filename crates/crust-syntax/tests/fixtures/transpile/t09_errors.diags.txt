@@ -1,0 +1,9 @@
+CR0002 92..98 le champ `moteur` est déjà généré par `over Moteur`
+CR0003 138..144 deux composants `over` génèrent le champ `moteur`
+CR0004 175..190 ce type n'est pas un chemin : le nom du champ ne peut pas être déduit
+CR0005 233..239 `struct` interdit dans le corps d'une classe
+CR0005 252..256 un type associé inhérent interdit dans le corps d'une classe
+CR0005 269..272 `use` interdit dans le corps d'une classe
+CR0005 298..301 `impl Trait for AutreType` interdit dans une classe
+CR0001 366..368 `,` attendue après le champ
+CR0001 399..400 paramètres génériques non fermés : `>` attendu

@@ -1,0 +1,10 @@
+[package]
+name = "cargo-crust"
+description = "Sous-commande cargo pour les projets Crust (.rsc)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crust-syntax = { path = "../crust-syntax" }

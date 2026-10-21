@@ -1,0 +1,12 @@
+[package]
+name = "crust-syntax"
+description = "Lexer, parseur léger et transpileur .rsc -> Rust standard (Crust)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"
