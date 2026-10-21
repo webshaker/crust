@@ -1,0 +1,10 @@
+[package]
+name = "crust-build"
+description = "Génère le Rust standard des fichiers .rsc depuis build.rs (Crust)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crust-syntax = { path = "../crust-syntax", version = "0.1.0" }

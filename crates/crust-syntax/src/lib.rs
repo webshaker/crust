@@ -18,6 +18,7 @@ pub mod sourcemap;
 mod toks;
 
 pub use diag::{Code, Diagnostic, Label};
+pub use parser::ModDecl;
 pub use resolve::{FsResolver, NoResolver, ResolveError, Resolved, Resolver};
 pub use sourcemap::{LineCol, LineIndex, Mapped, Segment, SegmentKind, SourceMap};
 
@@ -53,6 +54,37 @@ pub enum Layout {
     Natural,
 }
 
+/// Emplacement réel du fichier `.rsc` : nécessaire pour réécrire ses `mod x;`,
+/// puisque le fichier généré vit ailleurs (dans `OUT_DIR`).
+#[derive(Clone, Debug)]
+pub struct SourceInfo {
+    /// Chemin absolu du `.rsc`.
+    pub file: std::path::PathBuf,
+    /// Racine de crate (`main.rsc`, `lib.rsc`) : ses sous-modules sont dans son
+    /// répertoire, comme pour un `mod.rs`, et le fichier généré est inséré par
+    /// `include!` (ses attributs internes doivent aller dans le `.rs` racine).
+    pub crate_root: bool,
+}
+
+impl SourceInfo {
+    /// Répertoire des fichiers des sous-modules (`src/robot/Moteur.rsc` → `src/robot/Moteur/`).
+    pub fn children_dir(&self) -> std::path::PathBuf {
+        let dir = self.file.parent().unwrap_or(std::path::Path::new("/")).to_path_buf();
+        if self.crate_root {
+            dir
+        } else {
+            dir.join(self.file.file_stem().unwrap_or_default())
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Options {
+    pub layout: Layout,
+    /// Si présent, les `mod x;` sont réécrits pour pointer vers `src/` (section 17.3).
+    pub source: Option<SourceInfo>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Output {
     pub code: String,
@@ -65,17 +97,23 @@ pub struct Output {
 ///
 /// Un fichier sans construction Crust est rendu à l'identique (garantie C1).
 pub fn transpile(src: &str, layout: Layout, resolver: &dyn Resolver) -> Output {
-    transpile_impl(src, layout, resolver, true)
+    transpile_with(src, &Options { layout, source: None }, resolver)
+}
+
+/// [`transpile`] avec toutes les options.
+pub fn transpile_with(src: &str, options: &Options, resolver: &dyn Resolver) -> Output {
+    transpile_impl(src, options, resolver, options.source.is_none())
 }
 
 /// [`transpile`] sans le raccourci sur les fichiers sans mot-clé Crust :
 /// utilisé par les tests de compatibilité pour exercer le parseur sur tout le corpus.
 #[doc(hidden)]
 pub fn transpile_without_shortcut(src: &str, layout: Layout, resolver: &dyn Resolver) -> Output {
-    transpile_impl(src, layout, resolver, false)
+    transpile_impl(src, &Options { layout, source: None }, resolver, false)
 }
 
-fn transpile_impl(src: &str, layout: Layout, resolver: &dyn Resolver, shortcut: bool) -> Output {
+fn transpile_impl(src: &str, options: &Options, resolver: &dyn Resolver, shortcut: bool) -> Output {
+    let layout = options.layout;
     let identity = || Output {
         code: src.to_string(),
         map: SourceMap {
@@ -95,11 +133,12 @@ fn transpile_impl(src: &str, layout: Layout, resolver: &dyn Resolver, shortcut: 
         return identity();
     }
     let t = toks::Toks::new(src);
-    let items = parser::parse(&t);
+    let crate_root = options.source.as_ref().is_some_and(|s| s.crate_root);
+    let items = parser::parse(&t, crate_root);
     if items.is_empty() {
         return identity();
     }
-    let (code, mut map, diagnostics) = emit::emit(&t, &items, layout, resolver);
+    let (code, mut map, diagnostics) = emit::emit(&t, &items, options, resolver);
     if layout == Layout::Natural {
         map = SourceMap::default();
     }
@@ -110,4 +149,9 @@ fn transpile_impl(src: &str, layout: Layout, resolver: &dyn Resolver, shortcut: 
 /// ne peut pas le déterminer sans expansion de macros.
 pub fn top_level_names(src: &str) -> Option<Vec<String>> {
     emit::top_level_names(&toks::Toks::new(src))
+}
+
+/// Déclarations `mod` d'un fichier Rust (pour construire l'arbre de modules).
+pub fn mod_decls(src: &str) -> Vec<ModDecl> {
+    parser::mod_decls(&toks::Toks::new(src))
 }

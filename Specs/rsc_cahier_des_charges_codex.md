@@ -814,28 +814,39 @@ Cargo exige `src/main.rs` ou `src/lib.rs`. Quand la racine est écrite en `.rsc`
 include!(concat!(env!("OUT_DIR"), "/crust/root_main.rs"));
 ```
 
-Le fichier `root_main.rs` ne contient **que des déclarations** (validé par les spikes S1 et S2) :
+Contenu de `root_main.rs` (sortie réelle de `crust-build`, chemins abrégés) :
 
 ```rust
-#[path = "<OUT_DIR>/crust/src/robot/__dir.rs"] pub mod robot;     // modules .rsc
-#[doc(hidden)] #[path = "<OUT_DIR>/crust/src/main.rsc"] mod __crust_root;
-use self::__crust_root::main;      // bin : main importée (stable, vérifié en 1.92)
-pub(crate) use self::__crust_root::*;
-// lib : `pub use self::__crust_root::*;`
+#[path = "<paquet>/src/robot"] pub mod robot {                 // répertoire de .rsc
+#[path = "<OUT_DIR>/crust/src/robot/Moteur.rsc"] pub mod moteur;
+#[allow(unused_imports)] pub use self::moteur::*;              // chemin court crate::robot::Moteur
+}
+#[path = "<paquet>/src"] mod __crust_rs_capteur { #[path = "Capteur.rs"] pub mod capteur; }
+pub use self::__crust_rs_capteur::capteur;                     // .rs importé, monté par Crust
+include!("<OUT_DIR>/crust/src/main.rsc");                      // corps de main.rsc
 ```
 
-Le corps de `main.rsc` / `lib.rsc` est monté comme **module caché `__crust_root`** et **jamais inclus textuellement**. rust-analyzer n'offre pas la complétion dans du texte inclus par `include!` (spike S2), alors qu'il gère parfaitement les modules déclarés depuis un fichier inclus.
+**Révision P2 (2026-10-21).** Le module caché `__crust_root` envisagé après le spike S2 est **abandonné** : il changeait la sémantique Rust. Les champs, méthodes et items privés de la racine n'étaient plus visibles du reste de la crate, alors qu'à la racine ils le sont partout. Le corps de `main.rsc` / `lib.rsc` est donc **inclus textuellement** (`include!`), ce qui donne exactement la sémantique d'un `main.rs`.
 
-Conséquences, documentées pour l'utilisateur :
+La limite de rust-analyzer (pas de complétion dans du texte inclus, spike S2) sera traitée par `crust-lsp` (20.2) : il présente à rust-analyzer un `src/main.rs` (overlay) qui contient directement le texte généré, sans `include!`.
 
-- les items de `main.rsc` / `lib.rsc` accessibles par `crate::x` depuis d'autres modules doivent être au moins `pub(crate)`;
-- les `macro_rules!` de la racine destinées aux autres modules doivent être `#[macro_export]` ou placées dans le stub.
+Règles de montage, vérifiées par des tests rustc (rustc traite un fichier chargé via `#[path]` comme un `mod.rs`) :
+
+- **Répertoire de `.rsc`** : module inline dont le `#[path]` désigne le répertoire **source**. Les `mod x;` qu'il contient sont donc résolus comme en Rust standard.
+- **`.rsc`** : `#[path]` absolu vers le fichier généré.
+- **`.rs` importé mais monté nulle part** :
+  - dans un module inline généré : `pub mod x;` simple;
+  - dans un texte inclus : enveloppe `#[path = "<rép. source>"] mod __crust_rs_x { pub mod x; }` puis `pub use`.
+
+  Dans les deux cas, les sous-modules de `x` sont cherchés dans `<rép>/x/`, comme en Rust.
+- **`mod x;` écrit dans un `.rsc`** : le fichier généré vit dans `OUT_DIR`, donc le transpileur réécrit la déclaration en `#[path = "<rép. source>"] mod __crust_mod_x { pub mod x; } use self::__crust_mod_x::x;`, sur la même ligne. Le répertoire est celui des sous-modules du `.rsc` : `src/` pour une racine, `src/robot/Moteur/` pour `src/robot/Moteur.rsc`. Un `#[path]` éventuel reste relatif au répertoire du `.rsc`. Les `#[cfg]` et `#[macro_use]` sont reportés sur l'enveloppe.
 
 Autres règles :
 
-- Les attributs internes de crate (`#![no_std]`, `#![deny(...)]`) se placent dans ce stub, car `include!` ne les accepte pas. Il en va de même pour la doc de crate `//!`.
-- Si la racine reste un `.rs` écrit à la main, on y ajoute cette même ligne pour monter les modules `.rsc`.
-- Même principe pour un module `.rs` de répertoire mixte (12.2) : `include!(concat!(env!("OUT_DIR"), "/crust/src/robot/__dir.rs"));`
+- **Attributs internes** : `include!` refuse les attributs internes. Dans `main.rsc` / `lib.rsc`, un `#![...]` de premier niveau donne l'erreur **CR0015**, qui demande de le placer dans le `.rs` racine. La doc `//!` y devient un commentaire ordinaire de même longueur.
+- **Racine écrite à la main** : si la racine reste un `.rs` écrit à la main, on y ajoute cette même ligne pour monter les modules `.rsc`.
+- **Répertoire mixte** (12.2) : le module `.rs` qui possède le répertoire ajoute `include!(concat!(env!("OUT_DIR"), "/crust/dir/<rép>.rs"));`, par exemple `/crust/dir/outils.rs` pour `src/outils/`.
+- **Crate lib + bin** : les modules sont montés dans la lib. `root_main.rs` ne contient que l'inclusion de `main.rsc`, et ses `import` deviennent `use nom_crate::…`.
 
 **Aucune dépendance runtime** : pas de crate `crust` à importer, rien que `include!`, `concat!` et `env!`.
 
@@ -843,10 +854,10 @@ Autres règles :
 
 1. Parcourt `src/`, lit les `.rsc` et les déclarations `mod` des `.rs`, puis construit l'arbre de modules (section 12).
 2. Transpile chaque `.rsc` vers `$OUT_DIR/crust/src/<même chemin relatif>.rsc`. Le fichier généré **garde le nom et l'extension d'origine** pour faciliter le débogage (section 22). `rustc` accepte n'importe quelle extension via `#[path]`.
-3. Génère `$OUT_DIR/crust/root_<cible>.rs` et `__dir.rs` : déclarations `#[path = "<absolu>"] pub mod …;`, réexports, module `__crust_root` (17.2).
-4. Écrit les source maps `*.crustmap` à côté des fichiers générés.
+3. Génère `$OUT_DIR/crust/root_<cible>.rs` et, pour les répertoires mixtes, `$OUT_DIR/crust/dir/<rép>.rs` : déclarations de modules, réexports, inclusion de la racine (17.2).
+4. **Pas de fichier de source map sur disque** (révision P2). La traduction est déterministe et très rapide (moins d'une milliseconde par fichier), donc `cargo crust` et `crust-lsp` **recalculent** la source map en retranspilant le `.rsc` avec le même arbre de modules (crate `crust-build` utilisée comme bibliothèque). Le pied de page `// @generated … from src/<chemin>.rsc` de chaque fichier généré permet de retrouver la source.
 5. **N'écrit un fichier que si son contenu change**, pour préserver les mtimes et la compilation incrémentale de rustc.
-6. Émet `cargo::rerun-if-changed` pour chaque `.rsc`, chaque `.rs` dont les `mod` sont lus, et chaque répertoire de `src/` (pour détecter les fichiers ajoutés ou supprimés).
+6. Émet `cargo::rerun-if-changed=src`. Cargo surveille alors tout le répertoire, récursivement : un fichier modifié, ajouté ou supprimé relance le build script, et seulement dans ce cas.
 7. **N'échoue jamais** sur une erreur de l'utilisateur : les erreurs Crust deviennent des `compile_error!` dans le code généré (section 19).
 
 Les chemins absolus dans `#[path]` ne posent pas de problème : `OUT_DIR` est propre à chaque build et n'est jamais publié.
@@ -960,6 +971,7 @@ Après une erreur, la traduction continue (récupération) pour limiter les erre
 | CR0012 | Nom de répertoire ou de fichier qui n'est pas un identifiant valide | le chemin |
 | CR0013 | Import d'un fichier hors de `src/` | la chaîne du chemin |
 | CR0014 | Édition 2015 non supportée | `Cargo.toml` |
+| CR0015 | Attribut interne `#![...]` dans `main.rsc` / `lib.rsc` (inclus par `include!`) | l'attribut, avec le déplacement vers le `.rs` racine |
 
 Chaque code a une page d'explication (`cargo crust explain CR0002`), sur le modèle de `rustc --explain`.
 
@@ -1013,6 +1025,7 @@ Astuce clé : l'extension rust-analyzer officielle permet de choisir le binaire 
   - Requêtes avec position (completion, hover, definition, references, rename, signatureHelp, codeAction, documentHighlight, inlayHint, codeLens, semanticTokens, selectionRange, foldingRange, documentSymbol, callHierarchy, typeHierarchy, et les extensions `rust-analyzer/*`) : la position `.rsc` est convertie en position générée, la requête est transmise, puis **toutes les positions du résultat** sont reconverties en positions `.rsc`.
   - `publishDiagnostics` de rust-analyzer (natifs et flycheck `cargo check`) sur un fichier généré : remappés et publiés sur l'URI `.rsc`.
 - **Au démarrage**, `crust-lsp` ouvre en overlay (`didOpen`) **tous** les fichiers générés. C'est **obligatoire** : le VFS de rust-analyzer ne charge pas les fichiers d'extension `.rsc` depuis le disque (spike S2), mais il accepte les overlays quelle que soit l'extension (spike S3).
+- **Racine `.rsc`** : rust-analyzer ne propose pas de complétion dans un texte inclus par `include!` (spike S2). `crust-lsp` présente donc à rust-analyzer un `src/main.rs` / `src/lib.rs` en overlay, qui contient directement le contenu de `root_<cible>.rs` avec le `main.rsc` transpilé à la place de l'`include!`. Ce contenu est sémantiquement identique à ce que compile Cargo. Le `.rs` racine du disque n'est jamais modifié.
 - **`OUT_DIR` de rust-analyzer** : plusieurs `OUT_DIR` coexistent pour un paquet (build, check, clippy…). `crust-lsp` utilise celui de rust-analyzer, obtenu via `cargo check --message-format=json --all-targets` (message `build-script-executed`), et le réévalue si les features ou la configuration changent.
 - **Deux canaux de diagnostics** à remapper :
   - les diagnostics natifs en mode *pull* (`textDocument/diagnostic`, `workspace/diagnostic`). La requête est relancée sur `-32802 ServerCancelled` avec `retriggerRequest`;
@@ -1322,7 +1335,7 @@ Sessions LSP scriptées (client de test en Rust ou TypeScript) contre `crust-lsp
 | Spike | Résultat |
 |---|---|
 | S1 | ✅ rustc stable 1.92 : compile, et les erreurs donnent ligne et colonne exactes du `.rsc` |
-| S2 | ⚠️ OK avec deux contraintes : overlay obligatoire des `.rsc` générés, et racine montée en module `__crust_root` au lieu d'un `include!` textuel (17.2, 20.2) |
+| S2 | ⚠️ OK avec deux contraintes : overlay obligatoire des `.rsc` générés, et complétion absente dans le texte inclus par `include!`, traitée par un overlay du `.rs` racine dans `crust-lsp` (17.2, 20.2). Le module `__crust_root` d’abord envisagé a été abandonné en P2 |
 | S3 | ✅ Overlays dans `OUT_DIR` : hover, complétion et diagnostics fonctionnent. Plan B `.crust/gen` inutile |
 | S4 | ✅ en analyse statique (sélection par languageId `rust`, `server.path` respecté, `--version` requis). Bout en bout en P4 |
 | S5 | ✅ Point d'arrêt dans un `.rsc` via le `sourceMap` de lldb |
@@ -1368,10 +1381,25 @@ Ne pas considérer une phase comme réussie si les erreurs pointent vers du Rust
   - `robustness.rs` : aucune panique sur toutes les troncatures des fixtures;
   - `imports.rs` : résolution et erreurs CR0006, 0007, 0008, 0012, 0013.
 - **Performances P1 (release)** : 241 Mo/s sur le corpus sans classe ; fichier de 34 000 lignes et 2 000 classes en 10–20 ms, démarrage du processus compris.
-- **Restes à faire pour P2** :
-  - lecture des `mod` des `.rs` (12.2) : le résolveur suppose pour l'instant qu'un `.rs` est monté à l'emplacement déduit de son chemin;
-  - CR0009, CR0010, CR0011;
-  - réexports courts (12.1.5) et module `__crust_root` (17.2).
+- **P2 : terminé** (2026-10-21). Crate `crates/crust-build` (dépend uniquement de `crust-syntax`). Arbre de modules réel :
+  - lecture des `mod` des `.rs`, avec `#[path]` et modules inline;
+  - montage automatique des `.rs` importés;
+  - répertoires mixtes;
+  - lib + bin;
+  - réexports courts;
+  - CR0009, CR0010, CR0011 et CR0015.
+
+  Tests `crates/crust-build/tests/projects.rs` : quatre vrais projets Cargo compilés et exécutés avec un simple `cargo build` / `cargo run` :
+  - `p1_robot` : exemple de la section 25, `.rs` importé, `mod util;` avec sous-module, détection des modifications et des nouveaux fichiers, build script non relancé sans changement;
+  - `p2_workspace` : lib + bin en `.rsc`, deux fichiers qui échangent le même type (T6), crate Rust ordinaire qui utilise la lib Crust (C3, C6);
+  - `p3_mixed` : projet Rust existant avec des `.rsc` ajoutés, répertoire mixte;
+  - `p4_errors` : CR0009, CR0010, CR0011 et CR0015, sans erreur en cascade.
+
+  Reste non testé : T15 (`cargo package`), qui nécessite que `crust-build` soit publié sur crates.io.
+- **Non pris en charge pour l'instant** :
+  - `src/bin/*.rsc`;
+  - `module-visibility` (12.1.4) : les modules générés sont toujours `pub`;
+  - `mod x;` à l'intérieur d'un module inline d'un `.rsc` (chemin approximé).
 
 ---
 

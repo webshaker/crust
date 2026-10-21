@@ -16,6 +16,10 @@ pub enum AttrKind {
     Cfg,
     /// `#[allow]`, `#[warn]`, `#[deny]`, `#[forbid]`, `#[expect]` : idem.
     Lint,
+    /// `#[path = "..."]` (sur un `mod x;`).
+    Path,
+    /// `#[macro_use]`.
+    MacroUse,
     /// Tout le reste (`derive`, `repr`, macros attributs…) : `struct` seulement.
     Other,
 }
@@ -151,10 +155,25 @@ pub struct Import {
     pub path_value: String,
 }
 
+/// `mod nom;` : module dans un autre fichier (section 12.2).
+#[derive(Clone, Debug)]
+pub struct FileMod {
+    /// Des attributs au `;` inclus.
+    pub range: TokRange,
+    pub attrs: Vec<Attr>,
+    pub vis: Option<TokRange>,
+    pub name: usize,
+    /// Modules inline englobants (`mod a { mod b { mod x; } }` → `["a", "b"]`).
+    pub inline: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Item {
     Class(Class),
     Import(Import),
+    FileMod(FileMod),
+    /// Attribut interne ou doc `//!` en tête d'une racine de crate `.rsc`.
+    InnerAttr(TokRange),
     /// Construction Crust mal formée : remplacée par un `compile_error!`.
     Broken(TokRange, Diagnostic),
 }
@@ -164,14 +183,28 @@ impl Item {
         match self {
             Item::Class(c) => c.range,
             Item::Import(i) => i.range,
+            Item::FileMod(m) => m.range,
+            Item::InnerAttr(r) => *r,
             Item::Broken(r, _) => *r,
         }
     }
 }
 
-pub fn parse(t: &Toks) -> Vec<Item> {
+/// `crate_root` : le fichier est inséré par `include!` à la racine de la crate,
+/// ses attributs internes de premier niveau sont signalés (CR0015).
+pub fn parse(t: &Toks, crate_root: bool) -> Vec<Item> {
     let mut items = Vec::new();
-    Parser { t }.module_items(0, t.len(), &mut items);
+    let parser = Parser { t };
+    if crate_root {
+        let mut p = 0;
+        while let Some(next) = t.inner_attr_end(p, t.len()) {
+            items.push(Item::InnerAttr(TokRange::new(p, next)));
+            p = next;
+        }
+        parser.module_items(p, t.len(), &[], &mut items);
+    } else {
+        parser.module_items(0, t.len(), &[], &mut items);
+    }
     items
 }
 
@@ -180,7 +213,7 @@ struct Parser<'t, 'a> {
 }
 
 impl Parser<'_, '_> {
-    fn module_items(&self, mut p: usize, end: usize, items: &mut Vec<Item>) {
+    fn module_items(&self, mut p: usize, end: usize, inline: &[String], items: &mut Vec<Item>) {
         let t = self.t;
         while p < end {
             if let Some(next) = t.inner_attr_end(p, end) {
@@ -208,8 +241,19 @@ impl Parser<'_, '_> {
                 p = next;
             } else if t.is_ident(k, "mod") && t.is_name(k + 1) && t.is_punct(k + 2, '{') && k + 2 < end {
                 let close = t.group_end(k + 2, end);
-                self.module_items(k + 3, close, items);
+                let mut inner = inline.to_vec();
+                inner.push(t.text(k + 1).to_string());
+                self.module_items(k + 3, close, &inner, items);
                 p = close + 1;
+            } else if t.is_ident(k, "mod") && t.is_name(k + 1) && t.is_punct(k + 2, ';') && k + 2 < end {
+                items.push(Item::FileMod(FileMod {
+                    range: TokRange::new(start, k + 3),
+                    attrs: self.attrs(start, q),
+                    vis,
+                    name: k + 1,
+                    inline: inline.to_vec(),
+                }));
+                p = k + 3;
             } else {
                 p = self.skip_item(k.max(start), end).max(start + 1);
             }
@@ -252,6 +296,8 @@ impl Parser<'_, '_> {
                     "doc" => AttrKind::Doc,
                     "cfg" | "cfg_attr" => AttrKind::Cfg,
                     "allow" | "warn" | "deny" | "forbid" | "expect" => AttrKind::Lint,
+                    "path" if t.is_punct(p + 3, '=') => AttrKind::Path,
+                    "macro_use" => AttrKind::MacroUse,
                     _ => AttrKind::Other,
                 }
             };
@@ -899,4 +945,66 @@ fn check_field_collisions(t: &Toks, class: &mut Class) {
         });
         *m = Member::Error(TokRange::new(f.range.start, f.end), diag);
     }
+}
+
+/// Déclaration de module trouvée dans un fichier (lecture des `.rs`, section 12.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModDecl {
+    pub name: String,
+    /// Valeur de `#[path = "..."]`.
+    pub path: Option<String>,
+    /// Contenu d'un module inline `mod x { ... }`, `None` pour `mod x;`.
+    pub inline: Option<Vec<ModDecl>>,
+}
+
+/// Déclarations `mod` d'un fichier Rust, modules inline compris.
+pub fn mod_decls(t: &Toks) -> Vec<ModDecl> {
+    fn walk(t: &Toks, mut p: usize, end: usize, out: &mut Vec<ModDecl>) {
+        let parser = Parser { t };
+        while p < end {
+            if let Some(next) = t.inner_attr_end(p, end) {
+                p = next;
+                continue;
+            }
+            let start = p;
+            let mut q = p;
+            while let Some(next) = t.outer_attr_end(q, end) {
+                q = next;
+            }
+            let k = t.vis_end(q, end).unwrap_or(q);
+            if t.is_ident(k, "mod") && t.is_name(k + 1) && (t.is_punct(k + 2, ';') || t.is_punct(k + 2, '{')) {
+                let path = parser
+                    .attrs(start, q)
+                    .iter()
+                    .find(|a| a.kind == AttrKind::Path)
+                    .map(|a| t.text(a.range.start + 4))
+                    .filter(|lit| lit.len() >= 2 && lit.starts_with('"'))
+                    .map(|lit| lit[1..lit.len() - 1].replace("\\\\", "\\"));
+                let name = t.text(k + 1).to_string();
+                if t.is_punct(k + 2, '{') {
+                    let close = t.group_end(k + 2, end);
+                    let mut inner = Vec::new();
+                    walk(t, k + 3, close, &mut inner);
+                    out.push(ModDecl {
+                        name,
+                        path,
+                        inline: Some(inner),
+                    });
+                    p = close + 1;
+                } else {
+                    out.push(ModDecl {
+                        name,
+                        path,
+                        inline: None,
+                    });
+                    p = k + 3;
+                }
+            } else {
+                p = parser.skip_item(k.max(start), end).max(start + 1);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(t, 0, t.len(), &mut out);
+    out
 }

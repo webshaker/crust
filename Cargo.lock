@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crust-build"
+version = "0.1.0"
+dependencies = [
+ "crust-syntax",
+]
+
+[[package]]
 name = "crust-syntax"
 version = "0.1.0"
 dependencies = [

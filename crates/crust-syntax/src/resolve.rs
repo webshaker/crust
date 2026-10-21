@@ -27,6 +27,10 @@ pub enum ResolveError {
     InvalidName {
         component: String,
     },
+    /// Le fichier `.rs` est monté par plusieurs déclarations `mod`.
+    MountedTwice {
+        modules: Vec<String>,
+    },
     /// Aucun résolveur disponible (transpilation d'un fichier isolé).
     Unsupported,
 }
@@ -47,8 +51,9 @@ impl Resolver for NoResolver {
 /// Résolution sur le système de fichiers : le chemin de module est déduit de
 /// l'emplacement du fichier sous `src/` (section 12.1).
 ///
-/// Limite de la phase P1 : un `.rs` est supposé monté à l'emplacement déduit de
-/// son chemin ; la lecture des déclarations `mod` des `.rs` (12.2) viendra en P2.
+/// Utilisé par `cargo crust expand` sur un fichier isolé : un `.rs` y est supposé
+/// monté à l'emplacement déduit de son chemin. `crust-build` utilise l'arbre de
+/// modules réel (section 12.2).
 pub struct FsResolver {
     pub src_root: PathBuf,
     pub current_file: PathBuf,
@@ -85,52 +90,69 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
+/// Fichier visé par un chemin d'import : (chemin canonique, chemin relatif à `src_root`).
+///
+/// `./` et `../` sont relatifs au fichier courant, `@/` à `src_root` ; sans
+/// extension, `.rsc` puis `.rs` (les deux à la fois : ambigu).
+pub fn resolve_file(src_root: &Path, current_file: &Path, path: &str) -> Result<(PathBuf, PathBuf), ResolveError> {
+    let base = if let Some(rest) = path.strip_prefix("@/") {
+        src_root.join(rest)
+    } else if path.starts_with("./") || path.starts_with("../") {
+        current_file.parent().unwrap_or(Path::new("/")).join(path)
+    } else {
+        return Err(ResolveError::BadPrefix);
+    };
+    let base = normalize(&base);
+    if !base.starts_with(normalize(src_root)) {
+        return Err(ResolveError::OutsideSrc);
+    }
+    let candidates: Vec<PathBuf> = match base.extension().and_then(|e| e.to_str()) {
+        Some("rsc" | "rs") => vec![base.clone()],
+        _ => vec![base.with_extension("rsc"), base.with_extension("rs")],
+    };
+    let found: Vec<&PathBuf> = candidates.iter().filter(|c| c.is_file()).collect();
+    let target = match found.as_slice() {
+        [] => {
+            return Err(ResolveError::NotFound {
+                tried: candidates.iter().map(|c| c.display().to_string()).collect(),
+            });
+        }
+        [one] => (*one).clone(),
+        [rsc, rs, ..] => {
+            return Err(ResolveError::Ambiguous {
+                rsc: rsc.display().to_string(),
+                rs: rs.display().to_string(),
+            });
+        }
+    };
+    let root = src_root.canonicalize().map_err(|_| ResolveError::OutsideSrc)?;
+    let canonical = target.canonicalize().map_err(|_| ResolveError::OutsideSrc)?;
+    let rel = canonical
+        .strip_prefix(&root)
+        .map_err(|_| ResolveError::OutsideSrc)?
+        .to_path_buf();
+    Ok((canonical, rel))
+}
+
+/// Noms définis par un fichier `.rsc` (pour CR0007) ; `None` pour un `.rs`, dont
+/// les items peuvent venir de macros.
+pub fn exports_of(file: &Path) -> Option<Vec<String>> {
+    if file.extension().is_some_and(|e| e == "rsc") {
+        std::fs::read_to_string(file)
+            .ok()
+            .and_then(|src| crate::top_level_names(&src))
+    } else {
+        None
+    }
+}
+
 impl Resolver for FsResolver {
     fn resolve(&self, path: &str) -> Result<Resolved, ResolveError> {
-        let base = if let Some(rest) = path.strip_prefix("@/") {
-            self.src_root.join(rest)
-        } else if path.starts_with("./") || path.starts_with("../") {
-            self.current_file.parent().unwrap_or(Path::new("/")).join(path)
-        } else {
-            return Err(ResolveError::BadPrefix);
-        };
-        let base = normalize(&base);
-        if !base.starts_with(normalize(&self.src_root)) {
-            return Err(ResolveError::OutsideSrc);
-        }
-        let candidates: Vec<PathBuf> = match base.extension().and_then(|e| e.to_str()) {
-            Some("rsc" | "rs") => vec![base.clone()],
-            _ => vec![base.with_extension("rsc"), base.with_extension("rs")],
-        };
-        let found: Vec<&PathBuf> = candidates.iter().filter(|c| c.is_file()).collect();
-        let target = match found.as_slice() {
-            [] => {
-                return Err(ResolveError::NotFound {
-                    tried: candidates.iter().map(|c| c.display().to_string()).collect(),
-                });
-            }
-            [one] => (*one).clone(),
-            [rsc, rs, ..] => {
-                return Err(ResolveError::Ambiguous {
-                    rsc: rsc.display().to_string(),
-                    rs: rs.display().to_string(),
-                });
-            }
-        };
-
-        let root = self.src_root.canonicalize().map_err(|_| ResolveError::OutsideSrc)?;
-        let canonical = target.canonicalize().map_err(|_| ResolveError::OutsideSrc)?;
-        let rel = canonical.strip_prefix(&root).map_err(|_| ResolveError::OutsideSrc)?;
-
-        let module_path = module_path(rel)?;
-        let exports = if target.extension().is_some_and(|e| e == "rsc") {
-            std::fs::read_to_string(&target)
-                .ok()
-                .and_then(|src| crate::top_level_names(&src))
-        } else {
-            None
-        };
-        Ok(Resolved { module_path, exports })
+        let (target, rel) = resolve_file(&self.src_root, &self.current_file, path)?;
+        Ok(Resolved {
+            module_path: module_path(&rel)?,
+            exports: exports_of(&target),
+        })
     }
 }
 

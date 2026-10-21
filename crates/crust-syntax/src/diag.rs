@@ -20,10 +20,18 @@ pub enum Code {
     CR0007,
     /// Import sans extension ambigu.
     CR0008,
+    /// Deux fichiers donnent le même module.
+    CR0009,
+    /// Répertoire mixte sans ligne d'inclusion dans le module `.rs`.
+    CR0010,
+    /// Fichier `.rs` monté plusieurs fois puis importé.
+    CR0011,
     /// Nom de fichier ou de répertoire qui n'est pas un identifiant.
     CR0012,
     /// Import hors de `src/`.
     CR0013,
+    /// Attribut interne dans `main.rsc` / `lib.rsc`.
+    CR0015,
 }
 
 impl Code {
@@ -37,8 +45,12 @@ impl Code {
             Code::CR0006 => "CR0006",
             Code::CR0007 => "CR0007",
             Code::CR0008 => "CR0008",
+            Code::CR0009 => "CR0009",
+            Code::CR0010 => "CR0010",
+            Code::CR0011 => "CR0011",
             Code::CR0012 => "CR0012",
             Code::CR0013 => "CR0013",
+            Code::CR0015 => "CR0015",
         }
     }
 }

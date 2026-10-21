@@ -1,0 +1,9 @@
+[package]
+name = "p3_mixed"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+crust-build = { path = "{{CRUST_BUILD}}" }
+
+[workspace]

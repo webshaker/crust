@@ -6,11 +6,11 @@
 
 use crate::diag::{Code, Diagnostic};
 use crate::lexer::{DocStyle, TokenKind};
-use crate::parser::{Class, Generics, Import, ImportList, Item, Member, ParamKind, TraitImpl};
+use crate::parser::{AttrKind, Class, FileMod, Generics, Import, ImportList, Item, Member, ParamKind, TraitImpl};
 use crate::resolve::{ResolveError, Resolver};
 use crate::sourcemap::{Segment, SegmentKind, SourceMap};
 use crate::toks::{TokRange, Toks};
-use crate::{Layout, Span};
+use crate::{Layout, Options, SourceInfo, Span};
 
 /// Morceau de texte synthétisé : texte libre ou token recopié de la source.
 enum Piece {
@@ -170,9 +170,10 @@ impl Emitter<'_> {
 pub(crate) fn emit(
     t: &Toks,
     items: &[Item],
-    layout: Layout,
+    options: &Options,
     resolver: &dyn Resolver,
 ) -> (String, SourceMap, Vec<Diagnostic>) {
+    let layout = options.layout;
     let mut cx = Cx {
         t,
         e: Emitter {
@@ -183,6 +184,7 @@ pub(crate) fn emit(
         diags: Vec::new(),
         resolver,
         layout,
+        source: options.source.as_ref(),
     };
     let mut pos = 0;
     for item in items {
@@ -194,6 +196,8 @@ pub(crate) fn emit(
                 Layout::Natural => cx.class_natural(c),
             },
             Item::Import(i) => cx.import(i),
+            Item::FileMod(m) => cx.file_mod(m, span),
+            Item::InnerAttr(r) => cx.inner_attr(*r, span),
             Item::Broken(_, diag) => {
                 let mut s = Synth::default();
                 s.text(diag.to_compile_error(), diag.span);
@@ -213,6 +217,7 @@ struct Cx<'t, 'a> {
     diags: Vec<Diagnostic>,
     resolver: &'t dyn Resolver,
     layout: Layout,
+    source: Option<&'t SourceInfo>,
 }
 
 impl Cx<'_, '_> {
@@ -529,6 +534,80 @@ impl Cx<'_, '_> {
         }
     }
 
+    /// Racine `.rsc` insérée par `include!`, où les attributs internes sont refusés :
+    /// la doc `//!` devient un commentaire ordinaire, un `#![...]` est une erreur.
+    fn inner_attr(&mut self, r: TokRange, span: Span) {
+        let t = self.t;
+        let text = &t.src[span.start..span.end];
+        if t.doc_style(r.start).is_some() {
+            // `//!` → `// ` et `/*!` → `/* ` : même longueur, mêmes colonnes.
+            let mut s = Synth::default();
+            s.text(format!("{} {}", &text[..2], &text[3..]), span);
+            // Même texte à un caractère près, retours à la ligne compris : pas de `place`.
+            self.e.synth(&s);
+            return;
+        }
+        let diag = Diagnostic::new(
+            Code::CR0015,
+            span,
+            format!("attribut interne `{}` interdit dans une racine `.rsc`", oneline_text(t, r)),
+        )
+        .help("placez les attributs de crate (`#![...]`) dans `src/main.rs` ou `src/lib.rs`, au-dessus de la ligne `include!`");
+        let s = self.error_synth(&diag);
+        self.place(span, &s);
+    }
+
+    // ------------------------------------------------------------- mod x;
+
+    /// `mod x;` → module enveloppe dont le `#[path]` désigne le répertoire source,
+    /// pour que `x` et ses sous-modules soient cherchés comme en Rust standard :
+    ///
+    /// `#[path = "<rép>"] mod __crust_mod_x { pub mod x; } use self::__crust_mod_x::x;`
+    fn file_mod(&mut self, m: &FileMod, span: Span) {
+        let t = self.t;
+        let Some(source) = self.source else {
+            self.e.copy(span);
+            return;
+        };
+        let has_path = m.attrs.iter().any(|a| a.kind == AttrKind::Path);
+        let mut dir = if has_path && m.inline.is_empty() {
+            source.file.parent().unwrap_or(std::path::Path::new("/")).to_path_buf()
+        } else {
+            source.children_dir()
+        };
+        for seg in &m.inline {
+            dir.push(seg.strip_prefix("r#").unwrap_or(seg));
+        }
+        let name = t.text(m.name);
+        let wrapper = format!("__crust_mod_{}", name.strip_prefix("r#").unwrap_or(name));
+        let mut s = Synth::default();
+        for a in m
+            .attrs
+            .iter()
+            .filter(|a| matches!(a.kind, AttrKind::Cfg | AttrKind::MacroUse))
+        {
+            s.oneline(t, a.range).text(" ", span);
+        }
+        s.text(
+            format!("#[path = {:?}] mod {wrapper} {{ ", dir.display().to_string()),
+            span,
+        );
+        for a in &m.attrs {
+            s.oneline(t, a.range).text(" ", span);
+        }
+        s.text("pub mod ", span).src(t.span(m.name), true).text("; } ", span);
+        for a in m.attrs.iter().filter(|a| a.kind == AttrKind::Cfg) {
+            s.oneline(t, a.range).text(" ", span);
+        }
+        if let Some(v) = m.vis {
+            s.oneline(t, v).text(" ", span);
+        }
+        s.text(format!("use self::{wrapper}::"), span)
+            .src(t.span(m.name), false)
+            .text(";", span);
+        self.place(span, &s);
+    }
+
     // ---------------------------------------------------------------- import
 
     fn import(&mut self, imp: &Import) {
@@ -633,6 +712,12 @@ fn resolve_diag(err: ResolveError, path: &str, span: Span) -> Diagnostic {
             format!("`{component}` ne donne pas un nom de module Rust valide"),
         )
         .help("les noms de répertoires et de fichiers doivent être des identifiants Rust (lettres, chiffres, `_`)"),
+        ResolveError::MountedTwice { modules } => Diagnostic::new(
+            Code::CR0011,
+            span,
+            format!("`{path}` est monté plusieurs fois ({})", modules.join(", ")),
+        )
+        .help("un fichier ne doit être déclaré que par un seul `mod` ; importez le module avec `use` ailleurs"),
         ResolveError::Unsupported => Diagnostic::new(
             Code::CR0006,
             span,

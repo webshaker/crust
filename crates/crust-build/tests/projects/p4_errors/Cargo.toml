@@ -1,0 +1,9 @@
+[package]
+name = "p4_errors"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+crust-build = { path = "{{CRUST_BUILD}}" }
+
+[workspace]

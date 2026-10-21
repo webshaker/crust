@@ -38,6 +38,7 @@ Scripts : `spikes/lsp/s2.mjs`, `s3.mjs`, `s3b.mjs` (client LSP Node minimal dans
 2. **Le texte inclus par `include!` n'a pas de complétion.** Dans le corps de `main.rsc` inclus via `include!`, le hover fonctionne mais la complétion renvoie une liste vide (`isIncomplete: true`), pour `.rs` comme pour `.rsc`. En revanche, les **modules déclarés** (`#[path] mod x;`) depuis un fichier inclus fonctionnent pleinement.
    → Le corps de `main.rsc` / `lib.rsc` ne doit **pas** être inclus textuellement. Il devient un module caché `__crust_root` (voir la spec 17.2).
    → Vérifié : `use __crust_root::main;` (fonction `main` importée) compile et s'exécute en Rust **stable 1.92** (`spikes/imain`).
+   → **Révisé en P2** : `__crust_root` changeait la sémantique (items privés de la racine invisibles ailleurs). Retenu à la place : `include!` textuel pour la compilation, et overlay du `.rs` racine par `crust-lsp` pour rust-analyzer (spec 17.2 et 20.2).
 
 ## S3 — overlays sur des fichiers d'`OUT_DIR`
 
