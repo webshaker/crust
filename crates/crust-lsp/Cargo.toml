@@ -1,0 +1,15 @@
+[package]
+name = "crust-lsp"
+description = "Proxy LSP : rust-analyzer pour les fichiers .rsc (Crust)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crust-syntax = { path = "../crust-syntax" }
+crust-build = { path = "../crust-build" }
+serde_json = "1"
+
+[dev-dependencies]
+serde_json = "1"

@@ -171,6 +171,26 @@ impl<'a> LineIndex<'a> {
         }
     }
 
+    /// (ligne, colonne en unités UTF-16) → octet (positions LSP).
+    pub fn offset_utf16(&self, line: usize, col_utf16: usize) -> usize {
+        let Some(&start) = self.line_starts.get(line) else {
+            return self.text.len();
+        };
+        let end = self.line_starts.get(line + 1).copied().unwrap_or(self.text.len());
+        let mut units = 0;
+        for (i, c) in self.text[start..end].char_indices() {
+            if units >= col_utf16 || c == '\n' {
+                return start + i;
+            }
+            units += c.len_utf16();
+        }
+        end
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.line_starts.len()
+    }
+
     /// (ligne, colonne en caractères) → octet.
     pub fn offset(&self, line: usize, col_char: usize) -> Option<usize> {
         let start = *self.line_starts.get(line)?;

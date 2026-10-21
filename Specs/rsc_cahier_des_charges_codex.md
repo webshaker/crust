@@ -832,13 +832,9 @@ La limite de rust-analyzer (pas de complétion dans du texte inclus, spike S2) s
 
 Règles de montage, vérifiées par des tests rustc (rustc traite un fichier chargé via `#[path]` comme un `mod.rs`) :
 
-- **Répertoire de `.rsc`** : module inline dont le `#[path]` désigne le répertoire **source**. Les `mod x;` qu'il contient sont donc résolus comme en Rust standard.
+- **Répertoire de `.rsc`** : fichier de déclarations `$OUT_DIR/crust/dir/<rép>.rs`, monté par `#[path]` absolu. *(Révision P4 : un module inline avec `#[path]` contenant lui-même un `#[path]` absolu marche avec rustc, mais pas avec rust-analyzer, qui concatène les deux chemins.)* Ce fichier est le même que celui inclus par un répertoire mixte.
 - **`.rsc`** : `#[path]` absolu vers le fichier généré.
-- **`.rs` importé mais monté nulle part** :
-  - dans un module inline généré : `pub mod x;` simple;
-  - dans un texte inclus : enveloppe `#[path = "<rép. source>"] mod __crust_rs_x { pub mod x; }` puis `pub use`.
-
-  Dans les deux cas, les sous-modules de `x` sont cherchés dans `<rép>/x/`, comme en Rust.
+- **`.rs` importé mais monté nulle part** : toujours par l'enveloppe `#[path = "<rép. source>"] mod __crust_rs_x { pub mod x; }` puis `pub use`. Les sous-modules de `x` sont ainsi cherchés dans `<rép>/x/`, comme en Rust.
 - **`mod x;` écrit dans un `.rsc`** : le fichier généré vit dans `OUT_DIR`, donc le transpileur réécrit la déclaration en `#[path = "<rép. source>"] mod __crust_mod_x { pub mod x; } use self::__crust_mod_x::x;`, sur la même ligne. Le répertoire est celui des sous-modules du `.rsc` : `src/` pour une racine, `src/robot/Moteur/` pour `src/robot/Moteur.rsc`. Un `#[path]` éventuel reste relatif au répertoire du `.rsc`. Les `#[cfg]` et `#[macro_use]` sont reportés sur l'enveloppe.
 
 Autres règles :
@@ -1407,6 +1403,22 @@ Ne pas considérer une phase comme réussie si les erreurs pointent vers du Rust
   Tests `crates/cargo-crust/tests/cli.rs` : erreurs (type, champ dans la struct générée) au bon endroit et sans chemin généré visible, JSON remappé, `run`/`test`, `new` + `init`, `explain`. Écarts de rendu connus, liés à annotate-snippets 0.11 :
   - en couleur, le soulignement principal d'un warning est rouge au lieu de jaune;
   - une suggestion est affichée en ligne (`help: … : \`_x\``) et non sous forme de diff.
+- **P4 : terminé** (2026-10-21). Crate `crates/crust-lsp` (binaire `crust-lsp`, installé dans `~/.cargo/bin`).
+  - **Fonctionnement** :
+    - recherche de rust-analyzer : `CRUST_RA_PATH`, puis `rustup`, puis les extensions VS Code;
+    - au démarrage : `cargo metadata` et `cargo check --all-targets`, arrêté dès que les build scripts ont donné l'`OUT_DIR` de rust-analyzer;
+    - overlays de tous les `.rsc` générés et des fichiers de déclarations;
+    - overlay du `.rs` racine avec `main.rsc` inséré directement;
+    - conversion des positions dans les requêtes, les réponses (y compris `WorkspaceEdit`, `LocationLink`, éléments `resolve`), les diagnostics *push* et *pull*, et les tokens sémantiques (mots-clés `class`, `over`, `import`, `from` ajoutés);
+    - les modifications de texte qui tomberaient dans du code généré sont retirées, et les doublons de renommage fusionnés.
+  - **Test** `crates/crust-lsp/tests/lsp.rs`, contre le vrai rust-analyzer :
+    - complétion sur `self.parent.` (champ `over`, T11) et dans `main.rsc` (T10);
+    - survol;
+    - définition `.rsc` → `.rsc` et `.rs` → `.rsc` (T17);
+    - références jusque dans la racine;
+    - diagnostic natif à la bonne position;
+    - renommage d'un champ (3 + 2 modifications, sans doublon);
+    - coloration de `class`.
 - **Non pris en charge pour l'instant** :
   - `src/bin/*.rsc`;
   - `module-visibility` (12.1.4) : les modules générés sont toujours `pub`;

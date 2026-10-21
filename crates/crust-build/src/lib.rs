@@ -78,6 +78,11 @@ pub fn crate_lib_name(manifest_dir: &Path) -> String {
 /// sert aussi à recalculer la source map (`cargo crust`, `crust-lsp`).
 pub fn transpile_rsc(project: &Project, r: &tree::RscFile) -> Result<crust_syntax::Output, String> {
     let text = std::fs::read_to_string(&r.abs).map_err(|e| format!("{} : {e}", r.abs.display()))?;
+    Ok(transpile_rsc_text(project, r, &text))
+}
+
+/// [`transpile_rsc`] sur un texte en mémoire (document ouvert dans l'éditeur).
+pub fn transpile_rsc_text(project: &Project, r: &tree::RscFile, text: &str) -> crust_syntax::Output {
     let resolver = BuildResolver {
         project,
         current: r.abs.clone(),
@@ -90,7 +95,7 @@ pub fn transpile_rsc(project: &Project, r: &tree::RscFile) -> Result<crust_synta
             crate_root: r.root.is_some(),
         }),
     };
-    Ok(transpile_with(&text, &options, &resolver))
+    transpile_with(text, &options, &resolver)
 }
 
 #[derive(Debug, Default)]
@@ -157,29 +162,14 @@ pub fn generate(cfg: &Config) -> Result<Report, String> {
         write_if_changed(&gen_path(&gen_dir, &r.rel), &code, &mut report)?;
     }
 
-    for target in [Target::Lib, Target::Bin] {
-        let exists = match target {
-            Target::Lib => project.has_lib,
-            Target::Bin => project.has_bin,
-        };
-        if exists {
-            let code = root_content(&project, &gen_dir, target);
-            write_if_changed(&gen_dir.join(target.root_file()), &code, &mut report)?;
-        }
-    }
-    for (rel, dir) in &project.dirs {
-        if dir.kind == DirKind::Hosted {
-            let mut code = String::new();
-            dir_items(&project, &gen_dir, rel, true, &mut code);
-            let _ = writeln!(code, "{FOOTER}");
-            let path = gen_dir.join("dir").join(rel).with_extension("rs");
-            write_if_changed(&path, &code, &mut report)?;
-        }
+    for (path, code) in decl_files(&project, &gen_dir) {
+        write_if_changed(&path, &code, &mut report)?;
     }
     Ok(report)
 }
 
-fn gen_path(gen_dir: &Path, rel: &Path) -> PathBuf {
+/// Chemin du fichier généré pour le `.rsc` `src/<rel>`.
+pub fn gen_path(gen_dir: &Path, rel: &Path) -> PathBuf {
     gen_dir.join("src").join(rel)
 }
 
@@ -188,14 +178,8 @@ fn lit(path: &Path) -> String {
 }
 
 /// Contenu de `root_<cible>.rs`, inclus par `src/main.rs` ou `src/lib.rs`.
-fn root_content(p: &Project, gen_dir: &Path, target: Target) -> String {
-    let mut code = format!("// Modules Crust de la cible {target:?}.\n");
-    for e in &p.root_errors {
-        let _ = writeln!(code, "compile_error!({e:?});");
-    }
-    if target == p.owner {
-        dir_items(p, gen_dir, Path::new(""), true, &mut code);
-    }
+pub fn root_content(p: &Project, gen_dir: &Path, target: Target) -> String {
+    let mut code = root_decls(p, gen_dir, target);
     if let Some(r) = p.rsc.iter().find(|r| r.root == Some(target)) {
         let _ = writeln!(code, "include!({});", lit(&gen_path(gen_dir, &r.rel)));
     }
@@ -203,12 +187,54 @@ fn root_content(p: &Project, gen_dir: &Path, target: Target) -> String {
     code
 }
 
+/// Déclarations de modules de la cible, sans l'inclusion de la racine `.rsc`.
+pub fn root_decls(p: &Project, gen_dir: &Path, target: Target) -> String {
+    let mut code = format!("// Modules Crust de la cible {target:?}.\n");
+    for e in &p.root_errors {
+        let _ = writeln!(code, "compile_error!({e:?});");
+    }
+    if target == p.owner {
+        dir_items(p, gen_dir, Path::new(""), &mut code);
+    }
+    code
+}
+
+/// Fichiers de déclarations générés (hors `.rsc`) : racines et répertoires mixtes.
+pub fn decl_files(p: &Project, gen_dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut files = Vec::new();
+    for (target, exists) in [(Target::Lib, p.has_lib), (Target::Bin, p.has_bin)] {
+        if exists {
+            files.push((gen_dir.join(target.root_file()), root_content(p, gen_dir, target)));
+        }
+    }
+    for (rel, dir) in &p.dirs {
+        if matches!(dir.kind, DirKind::Hosted | DirKind::Generated) && !dir.module.is_empty() {
+            let mut code = String::new();
+            dir_items(p, gen_dir, rel, &mut code);
+            let _ = writeln!(code, "{FOOTER}");
+            files.push((dir_file(gen_dir, rel), code));
+        }
+    }
+    files
+}
+
+/// Fichier de déclarations d'un répertoire : `<gen>/dir/<rép>.rs`. Monté par
+/// `#[path]` (répertoire généré) ou inclus par le module `.rs` qui possède le
+/// répertoire (répertoire mixte).
+fn dir_file(gen_dir: &Path, rel: &Path) -> PathBuf {
+    gen_dir.join("dir").join(rel).with_extension("rs")
+}
+
 /// Déclarations d'un répertoire de modules.
 ///
-/// `include_ctx` : le texte est inséré par `include!`, où un `mod x;` serait
-/// cherché à côté du fichier généré ; les `.rs` passent alors par une enveloppe
-/// dont le `#[path]` désigne leur répertoire source.
-fn dir_items(p: &Project, gen_dir: &Path, rel: &Path, include_ctx: bool, code: &mut String) {
+/// Ce texte est soit inclus par `include!`, soit chargé par `#[path]` : dans les
+/// deux cas, un `mod x;` serait cherché à côté du fichier généré. Les `.rs` passent
+/// donc par une enveloppe dont le `#[path]` désigne leur répertoire source, et
+/// gardent ainsi la sémantique Rust pour leurs propres sous-modules.
+///
+/// Pas de module inline avec `#[path]` contenant un autre `#[path]` absolu :
+/// rust-analyzer concatène les deux chemins (rustc, lui, les gère).
+fn dir_items(p: &Project, gen_dir: &Path, rel: &Path, code: &mut String) {
     let d = &p.dirs[rel];
     for e in &d.errors {
         let _ = writeln!(code, "compile_error!({e:?});");
@@ -238,9 +264,7 @@ fn dir_items(p: &Project, gen_dir: &Path, rel: &Path, include_ctx: bool, code: &
             continue;
         }
         let name = s.file_name().unwrap_or_default().to_string_lossy();
-        let _ = writeln!(code, "#[path = {}] pub mod {name} {{", lit(&p.src.join(s)));
-        dir_items(p, gen_dir, s, false, code);
-        code.push_str("}\n");
+        let _ = writeln!(code, "#[path = {}] pub mod {name};", lit(&dir_file(gen_dir, s)));
     }
     for &i in &d.auto_rs {
         let a = &p.auto_rs[i];
@@ -248,19 +272,14 @@ fn dir_items(p: &Project, gen_dir: &Path, rel: &Path, include_ctx: bool, code: &
             continue;
         }
         let file_name = a.file.file_name().unwrap_or_default().to_string_lossy();
-        let plain = file_name == format!("{}.rs", a.name);
-        let decl = if plain {
+        let decl = if file_name == format!("{}.rs", a.name) {
             format!("pub mod {};", a.name)
         } else {
             format!("#[path = {file_name:?}] pub mod {};", a.name)
         };
-        if include_ctx || !plain {
-            let dir = a.file.parent().unwrap_or(&p.src);
-            let _ = writeln!(code, "#[path = {}] mod __crust_rs_{} {{ {decl} }}", lit(dir), a.name);
-            let _ = writeln!(code, "pub use self::__crust_rs_{0}::{0};", a.name);
-        } else {
-            let _ = writeln!(code, "{decl}");
-        }
+        let dir = a.file.parent().unwrap_or(&p.src);
+        let _ = writeln!(code, "#[path = {}] mod __crust_rs_{} {{ {decl} }}", lit(dir), a.name);
+        let _ = writeln!(code, "pub use self::__crust_rs_{0}::{0};", a.name);
     }
 }
 
